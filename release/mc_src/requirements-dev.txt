@@ -1,0 +1,3 @@
+# 开发/测试依赖；首行继承运行时锁文件。
+-r requirements.txt
+pytest==8.3.5

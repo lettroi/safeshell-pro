@@ -1,0 +1,40 @@
+# 一键启动：docker compose up --build
+# 默认 PROVIDER_MODE=mock（无需任何真实密钥即可体验）；SQLite 落在 ./data 卷内。
+# 单端口 8772 同时托管 API 与前端静态资源，无需额外反代。
+services:
+  app:
+    build:
+      context: .
+      # WSL2 原生 dockerd 的默认 bridge 网络在部分环境无法转发 DNS，
+      # 导致构建期 npm ci / pip install 解析失败。构建阶段走宿主机网络，
+      # 运行时仍使用 compose 默认 bridge（不受此配置影响）。
+      network: host
+    container_name: safeshell-pro-app
+    ports:
+      - "8772:8772"
+    env_file:
+      - .env
+    environment:
+      APP_HOST: 0.0.0.0
+      APP_ENV: production
+      APP_PORT: 8772
+      DEMO_MODE: "false"
+      DB_PATH: /app/data/margin.db
+      LOG_PATH: /app/logs/app.jsonl
+      # 前端由镜像内置 dist 托管，同源无需额外 CORS；如需跨域调试可在此追加
+      CORS_ORIGINS: http://localhost:8772
+    # 网络模式：标准 Docker / Docker Desktop 用 bridge（默认，ports 映射生效）。
+    # WSL2 原生 dockerd 若 bridge 出站 DNS 不通（容器解析不了厂商域名、
+    # 真实模型调用全部超时），在 .env 里设 SFP_NETWORK_MODE=host 切换。
+    # host 模式下 ports 会被忽略并给出告警，但服务直接监听宿主 8772，仍可访问。
+    network_mode: ${SFP_NETWORK_MODE:-bridge}
+    volumes:
+      - ./data:/app/data
+      - ./logs:/app/logs
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8772/api/v1/health', timeout=3)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s

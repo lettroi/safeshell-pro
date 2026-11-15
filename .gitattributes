@@ -1,0 +1,34 @@
+# 仓库内统一存 LF。Windows 侧 core.autocrlf=true，若不显式锁定，
+# 克隆后 .sh 可能被转成 CRLF 导致 WSL/Linux 下脚本无法执行。
+* text=auto
+
+*.sh        text eol=lf
+*.py        text eol=lf
+*.ts        text eol=lf
+*.tsx       text eol=lf
+*.css       text eol=lf
+*.html      text eol=lf
+*.json      text eol=lf
+*.jsonl     text eol=lf
+*.yml       text eol=lf
+*.yaml      text eol=lf
+*.md        text eol=lf
+*.sql       text eol=lf
+*.toml      text eol=lf
+*.ini       text eol=lf
+Dockerfile  text eol=lf
+*.example   text eol=lf
+.env.example text eol=lf
+
+*.bat       text eol=crlf
+*.ps1       text eol=crlf
+
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.woff binary
+*.woff2 binary
+*.zip binary
+*.db binary

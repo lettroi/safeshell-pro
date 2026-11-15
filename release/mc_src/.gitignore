@@ -1,0 +1,45 @@
+# 密钥与本地配置（最高优先级）
+.env
+.env.*
+!.env.example
+!env.example
+*.pem
+*.key
+secrets/
+
+# Python
+venv/
+.venv/
+env/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# 本地数据与日志（SQLite / 日志文件不入库）
+data/*.db
+data/*.sqlite3
+logs/
+*.log
+
+# Node / 前端产物
+node_modules/
+dist/
+build/
+web/dist/
+*.tsbuildinfo
+
+# 编辑器 / 系统
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+
+# 大文件与产物（原型截图例外，必须提交）
+*.zip
+*.mp4
+!docs/prototypes/*.png

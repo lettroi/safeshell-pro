@@ -1,0 +1,37 @@
+# 构建上下文最小化：绝不能把本机凭据 / 虚拟环境 / 依赖目录传给 Docker daemon。
+# data/margin.db 含真实 API Key，必须排除；运行时通过 volume 挂载或向导写入。
+
+# 本机凭据与运行时数据
+data/
+logs/
+*.db
+*.sqlite
+*.key
+.env
+
+# Python 虚拟环境与缓存
+venv/
+.venv/
+__pycache__/
+**/__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# 前端依赖（镜像内由 npm ci 重装；web/dist 由构建阶段生成）
+web/node_modules/
+web/dist/
+
+# 版本控制与文档（镜像不需要）
+.git/
+.gitignore
+*.md
+tests/
+eval/
+scripts/
+
+# 临时探针 / 备份
+_*.json
+_*.py
+*.bak

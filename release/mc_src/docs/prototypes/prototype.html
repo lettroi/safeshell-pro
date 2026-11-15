@@ -1,0 +1,208 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>余量 · 交互原型三态</title>
+<style>
+  :root{
+    --bg:#0E0E10; --side:#0A0A0B; --card:#18181B; --inset:#141417;
+    --line:#27272A; --hi:#FAFAFA; --body:#E4E4E7; --sub:#A1A1AA; --dim:#8A8A93;
+    --red:#FF5252; --red-bg:#3A1D1D; --amber:#F2C94C; --amber-bg:#3A3018;
+    --green:#4CAF50; --green-bg:#18301C; --blue:#29B6F6; --blue-bg:#12303A;
+    --mono:'JetBrains Mono',Consolas,'Courier New',monospace;
+    --sans:'Noto Sans SC','Microsoft YaHei',Inter,system-ui,sans-serif;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--body);font-family:var(--sans);font-size:12px}
+  .app{display:flex;height:100vh;min-height:760px}
+  .side{width:216px;flex:none;background:var(--side);border-right:1px solid var(--line);display:flex;flex-direction:column;padding:18px 12px}
+  .brand{display:flex;gap:10px;align-items:center;padding:0 8px 20px;border-bottom:1px solid var(--line)}
+  .brand b{font-size:16px;color:var(--hi);letter-spacing:2px}
+  .brand span{display:block;font:9px var(--mono);color:var(--dim);letter-spacing:1.4px;margin-top:2px}
+  .logo{width:26px;height:26px;border:1.5px solid var(--amber);border-radius:4px;display:grid;place-items:center;color:var(--amber);font:14px var(--mono)}
+  .grp{margin-top:20px;font:10px var(--mono);color:var(--dim);letter-spacing:1px;padding:0 8px 8px}
+  .nav{display:flex;gap:9px;align-items:center;padding:9px 10px;border-radius:4px;color:var(--sub);margin-bottom:2px}
+  .nav.on{background:var(--amber-bg);color:var(--amber)}
+  .nav .ic{width:14px;height:14px;border:1px solid currentColor;border-radius:3px;opacity:.8}
+  .foot{margin-top:auto;border-top:1px solid var(--line);padding-top:12px;font:10px var(--mono);color:var(--dim)}
+  .dot{display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--green);margin-right:6px}
+  .main{flex:1;display:flex;flex-direction:column;min-width:0}
+  .top{height:56px;flex:none;border-bottom:1px solid var(--line);display:flex;align-items:center;padding:0 24px;gap:12px}
+  .crumb{color:var(--hi);font-size:13px}.crumb i{color:var(--dim);font-style:normal;margin:0 8px}
+  .sync{margin-left:auto;font:10px var(--mono);color:var(--green)}
+  .badge{font:9px var(--mono);border:1px solid var(--line);padding:3px 7px;border-radius:4px;color:var(--amber)}
+  .content{flex:1;display:flex;gap:16px;padding:20px 24px;min-height:0}
+  .col{background:var(--card);border:1px solid var(--line);border-radius:4px;display:flex;flex-direction:column;min-height:0}
+  .head{padding:12px 14px;border-bottom:1px solid var(--line);display:flex;align-items:center;gap:8px;color:var(--hi);font-size:13px}
+  .head small{margin-left:auto;color:var(--dim);font:10px var(--mono)}
+  .pad{padding:14px;overflow:auto}
+  h1{font-size:20px;color:var(--hi);margin:0 0 4px} .sub{color:var(--dim);font-size:11px}
+  .kpis{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin:14px 0}
+  .kpi{background:var(--inset);border:1px solid var(--line);border-radius:4px;padding:10px 12px}
+  .kpi label{display:block;color:var(--dim);font-size:10px;margin-bottom:6px}
+  .kpi b{font:16px var(--mono);color:var(--hi)}
+  table{width:100%;border-collapse:collapse;font-size:11px}
+  th{text-align:left;color:var(--dim);font-weight:400;font-size:10px;padding:8px 10px;background:var(--inset);border-bottom:1px solid var(--line)}
+  td{padding:9px 10px;border-bottom:1px solid var(--line);color:var(--body)}
+  td.m{font-family:var(--mono);color:var(--sub)}
+  .bar{width:120px;height:6px;background:var(--line);border-radius:3px;overflow:hidden;display:inline-block;vertical-align:middle;margin-right:8px}
+  .bar i{display:block;height:100%;background:var(--green)}
+  .pill{font:10px var(--mono);padding:3px 8px;border-radius:12px;white-space:nowrap}
+  .p-red{background:var(--red-bg);color:var(--red)} .p-amber{background:var(--amber-bg);color:var(--amber)}
+  .p-green{background:var(--green-bg);color:var(--green)} .p-blue{background:var(--blue-bg);color:var(--blue)}
+  .msg{border:1px solid var(--line);border-radius:4px;background:var(--inset);padding:12px;margin-bottom:10px;line-height:1.7}
+  .msg.user{border-left:2px solid var(--blue)} .msg.ai{border-left:2px solid var(--green)}
+  .msg .who{font:10px var(--mono);color:var(--dim);margin-bottom:6px}
+  .sys{background:var(--amber-bg);border:1px solid var(--amber);border-radius:4px;padding:11px;margin-bottom:10px;color:var(--amber);line-height:1.6}
+  .sys b{color:var(--hi)}
+  .src{font:10px var(--mono);color:var(--blue);margin-top:8px}
+  .btn{display:inline-block;border:1px solid var(--line);background:var(--inset);color:var(--body);border-radius:4px;padding:7px 12px;font-size:11px;margin:6px 6px 0 0;cursor:pointer}
+  .btn.primary{background:var(--amber);border-color:var(--amber);color:#1A1608;font-weight:600}
+  .btn.ghost{color:var(--amber);border-color:var(--amber)}
+  .inputbar{border-top:1px solid var(--line);padding:12px 14px;display:flex;gap:10px;align-items:center;background:var(--inset)}
+  .inputbar .box{flex:1;border:1px solid var(--line);border-radius:4px;padding:10px;color:var(--dim);font-size:11px}
+  .stage{border:1px solid var(--line);border-radius:4px;padding:11px 13px;margin-bottom:8px;display:flex;align-items:center;gap:10px;background:var(--inset)}
+  .stage .n{width:18px;height:18px;border-radius:50%;border:1px solid var(--line);display:grid;place-items:center;font:10px var(--mono);color:var(--dim)}
+  .stage.done .n{background:var(--green-bg);border-color:var(--green);color:var(--green)}
+  .stage.now{border-color:var(--amber);background:var(--amber-bg)}
+  .stage.now .n{border-color:var(--amber);color:var(--amber)}
+  .stage .t{color:var(--sub)} .stage.now .t{color:var(--hi)}
+  .stage .ms{margin-left:auto;font:10px var(--mono);color:var(--dim)}
+  .stage .code{font:10px var(--mono);color:var(--blue)}
+  .err{border:1px solid var(--red);background:var(--red-bg);border-radius:4px;padding:14px;margin-bottom:12px}
+  .err .ttl{color:var(--red);font-size:13px;margin-bottom:6px}
+  .err .desc{color:var(--body);line-height:1.7}
+  .err .code{font:10px var(--mono);color:var(--amber);margin-top:8px}
+  .note{font:10px var(--mono);color:var(--dim);margin-top:8px;line-height:1.6}
+  .annot{position:fixed;bottom:0;left:0;right:0;background:#08080A;border-top:1px solid var(--amber);padding:8px 24px;font:10px var(--mono);color:var(--amber);letter-spacing:.3px}
+  .two{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+  .right{width:300px;flex:none}
+  .left{width:240px;flex:none}
+  .center{flex:1;min-width:0}
+  .demo{font:9px var(--mono);color:var(--dim);border:1px solid var(--line);padding:2px 5px;border-radius:3px}
+</style>
+</head>
+<body>
+<div class="app">
+  <aside class="side">
+    <div class="brand"><div class="logo">余</div><div><b>余量</b><span>FREE TIER ROUTER</span></div></div>
+    <div class="grp">WORKSPACE</div>
+    <div class="nav"><i class="ic"></i>额度总览</div>
+    <div class="nav on"><i class="ic"></i>调用控制台</div>
+    <div class="nav"><i class="ic"></i>对话测试台</div>
+    <div class="nav"><i class="ic"></i>切换记录</div>
+    <div class="nav"><i class="ic"></i>实时日志</div>
+    <div class="grp">CONFIG &amp; ALERT</div>
+    <div class="nav"><i class="ic"></i>数据源</div>
+    <div class="nav"><i class="ic"></i>切换策略</div>
+    <div class="nav"><i class="ic"></i>告警规则</div>
+    <div class="nav"><i class="ic"></i>密钥管理</div>
+    <div class="foot"><span class="dot"></span>DATA SOURCE · MOCK ONLINE<br><span style="margin-left:13px">req_7f3a91c2 · v1.0.0</span></div>
+  </aside>
+  <div class="main">
+    <div class="top"><div class="crumb">工作区<i>/</i>调用控制台</div><span class="badge">DEMO</span><div class="sync">● 实时同步 · 6s</div></div>
+    <div class="content" id="content"></div>
+  </div>
+</div>
+<div class="annot" id="annot"></div>
+
+<script>
+const q = new URLSearchParams(location.search).get('state') || 'normal';
+const shell = (inner, note) => {
+  document.getElementById('content').innerHTML = inner;
+  document.getElementById('annot').innerHTML = note;
+};
+const leftCol = `
+  <div class="col left">
+    <div class="head">会话列表 <small>3</small></div>
+    <div class="pad">
+      <div style="padding:9px;border:1px solid var(--amber);background:var(--amber-bg);border-radius:4px;margin-bottom:8px;color:var(--hi)">免费额度问答 <span style="color:var(--dim);font:10px var(--mono)">14:32</span></div>
+      <div style="padding:9px;color:var(--sub);border-bottom:1px solid var(--line)">429 链路演练</div>
+      <div style="padding:9px;color:var(--sub);border-bottom:1px solid var(--line)">模型对比记录</div>
+    </div>
+  </div>`;
+const rightCol = `
+  <div class="col right">
+    <div class="head">本会话用量 <small>req_7f3a91c2</small></div>
+    <div class="pad">
+      <div class="kpi" style="margin-bottom:10px"><label>TOKENS 合计</label><b>428</b></div>
+      <div class="kpi" style="margin-bottom:10px"><label>当前生效模型</label><b style="font-size:12px">deepseek-v3</b></div>
+      <div class="kpi"><label>自动切换 / 平均延迟</label><b style="font-size:12px">1 / 186 ms</b></div>
+      <div style="margin-top:14px;color:var(--dim);font-size:10px;line-height:1.8">可切换模型（按剩余额度）<br>
+        <span style="color:var(--green)">● qwen-plus · 92%</span><br>
+        <span style="color:var(--amber)">● glm-4-flash · 18%</span><br>
+        <span style="color:var(--red)">● gemini-2.0-flash · 0%</span></div>
+    </div>
+  </div>`;
+const history = `
+  <div class="msg user"><div class="who">YOU · 14:32:05</div>Gemini 2.0 Flash 还有免费额度吗？耗尽后会自动切到哪家？</div>
+  <div class="sys"><b>已自动切换模型</b> · 14:32:07<br>Gemini 2.0 Flash 当日 1,000 次免费调用用尽，已切至 DeepSeek-V3；上下文与历史消息完整保留，本次回答继续。 <span style="color:var(--hi);text-decoration:underline">撤销切换</span></div>`;
+const inputBar = (text) => `<div class="inputbar"><div class="box">${text}</div><div class="btn primary">发送</div></div>`;
+
+if (q === 'normal') {
+  shell(leftCol + `
+    <div class="col center">
+      <div class="head">对话测试台 <small>model: deepseek-v3 · prompt_version: quota-router-cn-v1.0.0</small></div>
+      <div class="pad" style="flex:1">
+        ${history}
+        <div class="msg ai"><div class="who">ASSISTANT · 200 OK · 186 ms · 428 tokens</div>
+          Gemini 2.0 Flash 的免费额度为 <b>1,000 RPD</b>，本次监控中已于 14:32:07 用尽；自动切换策略按备胎优先级选择了 <b>DeepSeek-V3</b>，请求未中断。<br>
+          <span style="color:var(--sub)">可执行步骤：</span>① 打开「切换策略」确认阈值 ② 点击【注入一次 429】演练 ③ 在「切换记录」查看 request_id。<br>
+          <div class="src">sources: [policy-gemini-flash] [strategy-chain-v1] · 均来自本次检索命中</div>
+        </div>
+        <div style="margin-top:10px"><span class="btn">复制代码</span><span class="btn">重新生成</span><span class="btn ghost">查看来源</span><span class="btn">赞 / 踩</span></div>
+      </div>
+      ${inputBar('继续追问免费额度相关问题…')}
+    </div>` + rightCol,
+    'NORMAL 正常态 ｜ 触发：SSE stage: respond 成功 ｜ 动作：复制代码 / 重新生成 / 查看来源 / 反馈 ｜ 后端阶段 parse→retrieve→quota_check→route→generate→respond');
+} else if (q === 'loading') {
+  shell(leftCol + `
+    <div class="col center">
+      <div class="head">对话测试台 <small aria-live="polite">请求进行中 · req_7f3a91c2</small></div>
+      <div class="pad" style="flex:1">
+        ${history}
+        <div style="color:var(--amber);font:10px var(--mono);margin:4px 0 12px">SSE /api/v1/events/stream · 真实阶段推送（非定时模拟）</div>
+        <div class="stage done"><span class="n">✓</span><span class="t">正在解析请求与意图</span><span class="code">stage: parse</span><span class="ms">12 ms</span></div>
+        <div class="stage done"><span class="n">✓</span><span class="t">正在检索免费额度知识库</span><span class="code">stage: retrieve</span><span class="ms">38 ms</span></div>
+        <div class="stage done"><span class="n">✓</span><span class="t">正在检查数据源额度与阈值</span><span class="code">stage: quota_check</span><span class="ms">21 ms</span></div>
+        <div class="stage now"><span class="n">4</span><span class="t">正在选择可用模型 / 触发切换</span><span class="code">stage: route</span><span class="ms">进行中…</span></div>
+        <div class="stage"><span class="n">5</span><span class="t">正在生成回答</span><span class="code">stage: generate</span><span class="ms">—</span></div>
+        <div class="stage"><span class="n">6</span><span class="t">响应就绪</span><span class="code">stage: respond</span><span class="ms">—</span></div>
+        <div class="note">每阶段显示真实耗时；超过 8 s 追加「仍在生成，可继续等待」；检索为空时不会进入 generate，直接返回 NO_CONTEXT。</div>
+      </div>
+      ${inputBar('Gemini 2.0 Flash 还有免费额度吗？耗尽后会自动切到哪家？（已保留原输入）')}
+    </div>` + rightCol,
+    'LOADING 加载态 ｜ 触发：请求进行中 SSE stage 事件 ｜ 文案与后端阶段一一对应：parse / retrieve / quota_check / route / generate / respond ｜ 主按钮：发送（禁用中）');
+} else {
+  shell(leftCol + `
+    <div class="col center">
+      <div class="head">对话测试台 <small>异常兜底 · 2 个场景</small></div>
+      <div class="pad" style="flex:1">
+        ${history}
+        <div class="two">
+          <div>
+            <div class="err"><div class="ttl">场景 A · 服务繁忙，请稍后重试</div>
+              <div class="desc">上游模型在 10 s 内未返回。已保留你的原始提问，可以直接重试，不会丢失上下文与切换记录。</div>
+              <div class="code">error_code: LLM_TIMEOUT · request_id: req_7f3a91c2 · stage: generate</div>
+              <div><span class="btn primary">重试</span><span class="btn">反馈</span></div>
+            </div>
+            <div class="note">后端触发：LLM timeout / 5xx ｜ 不暴露堆栈、不显示空白页 ｜ 重试复用原输入与 request_id。</div>
+          </div>
+          <div>
+            <div class="err" style="border-color:var(--amber);background:var(--amber-bg)">
+              <div class="ttl" style="color:var(--amber)">场景 B · 我无法确定该答案的准确性</div>
+              <div class="desc" style="color:var(--hi)">本地政策知识库未检索到可支撑该结论的文档，或输入命中了安全规则；不会编造免费额度政策，建议查阅厂商官方文档。</div>
+              <div class="code" style="color:var(--hi)">error_code: NO_CONTEXT / UNSUPPORTED_CLAIM · sources: []</div>
+              <div><span class="btn ghost" style="color:var(--hi);border-color:var(--hi)">反馈</span><span class="btn" style="color:var(--hi)">查阅官方文档</span><span class="btn" style="color:var(--hi)">修改输入</span></div>
+            </div>
+            <div class="note">后端触发：检索为空短路 / 安全过滤命中 ｜ 不调用 LLM ｜ 每个异常态至少 1 个可点击动作。</div>
+          </div>
+        </div>
+      </div>
+      ${inputBar('Gemini 2.0 Flash 还有免费额度吗？耗尽后会自动切到哪家？（原输入保留，可一键重试）')}
+    </div>` + rightCol,
+    'ERROR 异常态 ｜ A 超时 LLM_TIMEOUT【重试】【反馈】 ｜ B 幻觉/违规 NO_CONTEXT・UNSUPPORTED_CLAIM【反馈】【查阅官方文档】【修改输入】');
+}
+</script>
+</body>
+</html>

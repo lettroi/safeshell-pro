@@ -1,0 +1,57 @@
+﻿余量 · FREE TIER ROUTER  v0.2.0  交付包
+================================================
+
+【两个包怎么选】
+
+1) margin-console-v0.2.0-免安装运行包.zip   <- 想马上看效果，选这个
+   - 已包含 Python 虚拟环境 (venv)、预构建前端 (web/dist)、示例配置 .env
+   - 解压到不含中文和空格的路径，双击 start.bat
+   - 浏览器会自动打开 http://127.0.0.1:8000/#guide （新手接入向导）
+   - 关闭那个最小化的 "margin-console-server" 黑色窗口 = 停止服务
+   - 仅保证在当前这台 Windows 机器可用（venv 绑定本机 Python 路径）
+   - 若 8000 端口被占用，编辑 start.bat 里的 --port 换个端口
+
+2) margin-console-v0.2.0-源码包.zip         <- 换机器 / 改代码 / 归档，选这个
+   - 不含 venv 与 node_modules，体积小
+   - 按 README.md「一键启动」：
+       python -m venv venv
+       venv\Scripts\pip install -r requirements-dev.txt
+       copy .env.example .env
+       venv\Scripts\python.exe -m uvicorn server.main:app --host 127.0.0.1 --port 8000
+   - 已附带 web/dist 预构建前端，不装 Node 也能看到完整页面
+
+【第一次打开先看什么】
+
+首屏顶部黄色横幅 + 左侧导航第一项「新手接入向导」。
+默认是「演示模式」：额度、趋势、对话回答都是本地模拟数据，零配置、不联网、不花钱，
+不接入也能完整体验所有界面。
+
+想用真实免费大模型，按向导四步：
+   ① 看懂演示模式与接入后的区别
+   ② 选一家平台（每家都有官方注册页 / API Key 页 / 免费政策页直达链接）
+   ③ 粘贴自己的 API Key，点「测试连接」，通过后点「保存并启用」
+   ④ 发一条真实消息，看到模型回复、真实模型名与延迟就说明接好了
+
+保存后顶栏 DEMO 变成 LIVE，对话测试台自动走真实模型；可一键移除回到演示模式。
+注意：免费模型都要用你自己的账号申请 Key，本工具不代注册、不生成密钥、不上传密钥。
+
+【安全说明】
+
+- 包内 .env 是示例配置，UPSTREAM_API_KEY 为占位符，不含任何真实密钥。
+- 真实 API Key 只保存在你自己机器的 SQLite 中，页面与日志只显示脱敏值。
+- 请勿把填过真实 Key 的 .env、data/*.db 上传到公开仓库。
+
+【内容清单】
+
+fullstack/ 全部源码、文档、截图、测试、评测指标、启动冒烟与交付审计
+00-原版原型/      零依赖旧版前端原型 5 个文件
+01-设计文档/      docs/ 设计说明、技术方案与 SOP 技能资料
+docs/FREE_TIER_CATALOG.md   2026-11-13 官方核实的免费大模型政策清单（带官方链接、核实级别）
+README.md 第一节  「给完全没用过的人：5 分钟上手」
+
+【版本与验证】
+
+v0.2.0 / commit b8a9d74 / tag v0.2.0
+pytest 48 passed · 评测 24/24 100% · 启动冒烟 15 项 · 交付审计 31/31、0 FAIL / 0 WARN
+已知局限见 EVAL_REPORT.md 第 6 节：额度表与 Usage 轮询仍是演示数据；
+政策清单是静态快照、运行时不联网；未用真实厂商 Key 实测；Docker 未实机构建。

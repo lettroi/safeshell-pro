@@ -1,0 +1,58 @@
+{
+  "version": "eval_dataset_v1.1",
+  "measured_at": "2026-11-13T15:16:31+08:00",
+  "method": "独立 uvicorn 子进程 + httpx SSE 客户端；TTFT 从 POST 发出计时到首个 stage 帧",
+  "environment": {
+    "os": "win32",
+    "python": "3.13.14",
+    "provider_mode": "mock",
+    "transport": "127.0.0.1 loopback TCP"
+  },
+  "sample_size": 24,
+  "sse_ttft_ms": {
+    "p50": 153.2,
+    "p95": 202.6,
+    "avg": 159.5,
+    "min": 144.9,
+    "max": 209.8
+  },
+  "e2e_http_ms": {
+    "p50": 156.1,
+    "p95": 207.5,
+    "avg": 162.8
+  },
+  "switch_latency_ms": {
+    "samples": 20,
+    "p50": 55.7,
+    "p95": 63.6,
+    "avg": 56.47,
+    "max": 64.16
+  },
+  "raw_ttft_ms": [
+    161.9,
+    158.1,
+    153.3,
+    155.2,
+    151.1,
+    149.8,
+    149.4,
+    153.7,
+    151.9,
+    153.1,
+    155.3,
+    154.5,
+    152.3,
+    209.8,
+    147.7,
+    151.8,
+    151.5,
+    152.4,
+    144.9,
+    162.5,
+    207.1,
+    176.8,
+    172.2,
+    152.7
+  ],
+  "measurement_command": "python -m tests.measure_sse"
+}

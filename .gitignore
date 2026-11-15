@@ -1,0 +1,74 @@
+# ---------------------------------------------------------------------------
+# SafeShell Pro 仓库根忽略规则（上传前必须逐条核对，密钥绝不入库）
+# ---------------------------------------------------------------------------
+
+# 凭据与令牌（最高优先级）
+githubtoken.txt
+*TOKEN*.txt
+*token*.txt
+*PAT*.txt
+*.pat
+*.pem
+*.key
+secrets/
+.env
+.env.*
+!.env.example
+!env.example
+
+# 本地数据：SQLite 内含真实厂商 API Key 与审计明细
+*.db
+*.sqlite
+*.sqlite3
+data/*.db
+data/*.db-*
+logs/
+*.log
+logs/*.jsonl
+feedback.jsonl
+!eval/cases.jsonl
+!**/eval/cases.jsonl
+
+# Python 运行环境与缓存
+venv/
+.venv/
+env/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Node / 前端构建产物（由 Dockerfile 构建期生成）
+node_modules/
+web/dist/
+*.tsbuildinfo
+
+# 本机归档交付包（含 venv，约 9MB；仅本地保留，不入源码仓库）
+release/*.zip
+
+# 原课程作业的静态原型 / 技能模板（与产品无关，且文件名编码已损坏）
+release/mc_src/00-*/
+release/mc_src/01-*/
+release/mc_src/*.txt
+!release/mc_src/requirements.txt
+!release/mc_src/requirements-dev.txt
+
+# WorkBuddy 工作区内部数据（工作日志 / 会话记忆，非交付物）
+.workbuddy/
+
+# 临时探针 / 基准脚本
+_*.json
+_*.py
+_*.log
+_*.tmp
+
+# 编辑器 / 系统
+.DS_Store
+Thumbs.db
+*.swp
+.idea/
+.vscode/

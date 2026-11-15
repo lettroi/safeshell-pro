@@ -1,0 +1,86 @@
+{
+  "measured_at": "2026-11-13T15:21:15+08:00",
+  "method": "空白临时 SQLite + 独立 uvicorn 子进程 + httpx 真实 HTTP",
+  "total": 15,
+  "passed": 15,
+  "failed": 0,
+  "skipped": 0,
+  "checks": [
+    {
+      "name": "服务从空白数据库启动",
+      "status": "PASS",
+      "detail": "port=56756"
+    },
+    {
+      "name": "health 200 / status=ok / db_ok / poller_alive",
+      "status": "PASS",
+      "detail": "{\"status\": \"ok\", \"provider_mode\": \"mock\", \"prompt_version\": \"quota-router-cn-v1.0.0\", \"db_ok\": true, \"poller_alive\": true}"
+    },
+    {
+      "name": "Swagger /docs 可访问",
+      "status": "PASS",
+      "detail": "HTTP 200"
+    },
+    {
+      "name": "OpenAPI 中 ChatRequest 带请求示例",
+      "status": "PASS",
+      "detail": "1 个示例"
+    },
+    {
+      "name": "前端静态产物由 FastAPI 托管",
+      "status": "PASS",
+      "detail": "HTTP 200"
+    },
+    {
+      "name": "额度总览聚合视图（9 个数据源 + 策略）",
+      "status": "PASS",
+      "detail": "providers=9"
+    },
+    {
+      "name": "正常问答：无错误码 / 有来源 / 六阶段 / token<500",
+      "status": "PASS",
+      "detail": "error=None sources=2 stages=6 tokens=436"
+    },
+    {
+      "name": "检索为空短路 NO_CONTEXT 且不调用模型",
+      "status": "PASS",
+      "detail": "error=NO_CONTEXT"
+    },
+    {
+      "name": "429 演练：自动切换 + 同 request_id 重放成功",
+      "status": "PASS",
+      "detail": "deepseek → qwen, replay=200"
+    },
+    {
+      "name": "SSE 首帧 connected",
+      "status": "PASS",
+      "detail": "event: connected | data: {\"status\": \"connected\"} | "
+    },
+    {
+      "name": "日志接口不回显明文密钥",
+      "status": "PASS",
+      "detail": ""
+    },
+    {
+      "name": "新手接入预设可用（≥3 家、含官方链接与手把手步骤）",
+      "status": "PASS",
+      "detail": "7 家"
+    },
+    {
+      "name": "未填 Key 时给出可操作的错误提示",
+      "status": "PASS",
+      "detail": "密钥无效或没有权限（还没有填 API Key）"
+    },
+    {
+      "name": "结构化日志文件不含明文密钥",
+      "status": "PASS",
+      "detail": "4 行"
+    },
+    {
+      "name": "结构化日志 user_id 为哈希值",
+      "status": "PASS",
+      "detail": ""
+    }
+  ],
+  "measurement_command": "python scripts/smoke_startup.py"
+}
