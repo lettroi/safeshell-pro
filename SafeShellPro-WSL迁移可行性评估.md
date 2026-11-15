@@ -3,6 +3,13 @@
 > 评估日期：2026-11-15 ｜ 性质：**只读调研 + 影子副本验证，未改动任何现有代码、配置、容器、数据或服务**
 > 用户诉求：「一半 Windows、一半 Docker 有点奇怪」，想知道能否统一到 WSL。先不改。
 
+> **2026-11-15 实施结果（本评估已执行）**
+> - 代码已迁移到 **`/root/safeshell-pro`**（WSL2 ext4），Windows 侧原目录转为只读归档；`data/margin.db` 与 `.env` 已随迁，脚本可执行位已修正。
+> - **dockerd 网络已单独修复**：根因是 `/etc/profile.d/docker-auto.sh` 用 `dockerd --iptables=false --ip6tables=false` 启动，缺 MASQUERADE（出站）与 DNAT（端口映射）。已切 iptables-legacy、去掉禁用参数、重启 dockerd；现在 `SFP_NETWORK_MODE=bridge` 全链路可用（Windows→8772→真实模型 200）。**本文 §3「迁移不解决 bridge 出站」的结论已被这一步覆盖**，不再需要 host 网络。
+> - 仍需常驻 WSL 会话（实例休眠是 VM 生命周期，与代码位置、网络模式都无关），`keepalive.sh` / `keep-wsl.bat` 保留。
+> - GitHub 公开仓库 `lettroi/safeshell-pro`：迁移前第一版、迁移后第二版各一次提交。
+> - 下文保留评估当时的测量与推演作为历史记录；带「仍需 host」字样的结论请以上述实施结果为准。
+
 ---
 
 ## 0. 结论（TL;DR）

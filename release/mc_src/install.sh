@@ -9,6 +9,7 @@
 #   bash install.sh doctor       diagnose docker / WSL / port / network mode
 #   bash install.sh keepalive    resident WSL session: keep VM/container alive
 #   bash install.sh keepalive-stop   ask the resident loop to exit
+#   bash install.sh fix-network  repair WSL dockerd bridge NAT (one-off, idempotent)
 #
 # All output is ASCII so the companion Windows .bat wrapper stays encoding-safe.
 
@@ -58,17 +59,18 @@ ensure_env() {
     cp .env.example .env
     info "generated .env from .env.example (placeholders only, no real keys)"
   fi
+  # 2026-11-15: WSL 原生 dockerd 曾以 --iptables=false 启动，bridge 容器
+  # 既出不了网（缺 MASQUERADE）也进不来（缺 DNAT）。修好 dockerd 后统一走
+  # 标准 bridge；这里只在 NAT 缺失时兜底修复，不再退化到 host 网络。
   if ! grep -q '^SFP_NETWORK_MODE=' .env; then
-    if [ "$(is_wsl_native_docker)" = yes ]; then
-      printf '\nSFP_NETWORK_MODE=host\n' >> .env
-      info "WSL native dockerd detected -> SFP_NETWORK_MODE=host"
-    else
-      printf '\nSFP_NETWORK_MODE=bridge\n' >> .env
-      info "standard Docker -> SFP_NETWORK_MODE=bridge"
+    printf '\nSFP_NETWORK_MODE=bridge\n' >> .env
+    info "default network mode: bridge"
+  fi
+  if [ "$(is_wsl_native_docker)" = yes ] && command -v iptables-legacy >/dev/null 2>&1; then
+    if ! iptables-legacy -t nat -S POSTROUTING 2>/dev/null | grep -q MASQUERADE; then
+      warn "bridge NAT missing - running fix-network"
+      cmd_fix_network || true
     fi
-  elif [ "$(is_wsl_native_docker)" = yes ] && grep -q '^SFP_NETWORK_MODE=bridge' .env; then
-    sed 's/^SFP_NETWORK_MODE=.*/SFP_NETWORK_MODE=host/' .env > .env.tmp && mv .env.tmp .env
-    warn "WSL native dockerd needs host networking; switched SFP_NETWORK_MODE to host"
   fi
   info "network mode: $(grep '^SFP_NETWORK_MODE=' .env | head -1 | cut -d= -f2)"
 }
@@ -141,6 +143,29 @@ cmd_doctor() {
   info "credentials in data/: $(ls data/*.db 2>/dev/null | wc -l) db file(s)"
   info "model list: curl -s http://127.0.0.1:${APP_PORT}/api/v1/models"
   info "WSL keepalive: bash keepalive.sh  (or double-click keep-wsl.bat on Windows)"
+  if command -v iptables-legacy >/dev/null 2>&1; then
+    info "bridge NAT: $(iptables-legacy -t nat -S POSTROUTING 2>/dev/null | grep -c MASQUERADE) MASQUERADE rule(s)"
+  fi
+}
+
+cmd_fix_network() {
+  # WSL 原生 dockerd 用 --iptables=false 启动时不会建 MASQUERADE，
+  # bridge 容器 DNS 与直连 IP 全部超时。补一条幂等的源地址转换规则即可，
+  # 无需重启 dockerd、不影响已运行的容器。
+  need_docker
+  command -v iptables-legacy >/dev/null 2>&1 || die "iptables-legacy not found (standard Docker does not need this)"
+  local subnet
+  subnet=$(docker network inspect bridge \
+    --format '{{(index .IPAM.Config 0).Subnet}}' 2>/dev/null | tr -d '\r')
+  [ -n "$subnet" ] || subnet=172.17.0.0/16
+  if iptables-legacy -t nat -S POSTROUTING 2>/dev/null | grep -q MASQUERADE; then
+    info "MASQUERADE already present (dockerd manages iptables normally)"
+  elif iptables-legacy -t nat -A POSTROUTING -s "$subnet" -j MASQUERADE 2>/dev/null; then
+    info "added MASQUERADE for $subnet - bridge containers can now reach the internet"
+  else
+    die "cannot add MASQUERADE (need root; in WSL run with sudo)"
+  fi
+  info "verifying: docker run --rm --network=bridge alpine:3.20 ping -c1 223.5.5.5"
 }
 
 case "${1:-install}" in
@@ -153,5 +178,6 @@ case "${1:-install}" in
   keepalive) exec bash keepalive.sh ;;
   keepalive-once) exec bash keepalive.sh --once ;;
   keepalive-stop) exec bash keepalive.sh --stop ;;
-  *) die "unknown command: $1 (use install|status|logs|stop|restart|doctor|keepalive)" ;;
+  fix-network) cmd_fix_network ;;
+  *) die "unknown command: $1 (use install|status|logs|stop|restart|doctor|keepalive|fix-network)" ;;
 esac

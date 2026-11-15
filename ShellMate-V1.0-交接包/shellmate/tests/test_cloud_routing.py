@@ -127,7 +127,7 @@ class TestCloudCandidateChain(unittest.TestCase):
                    cloud_model="glm-4-flash", cloud_models_light="m1")
         client = self._client(cfg)
         replies = iter([_reply(BAD), _reply(GOOD)])
-        with patch("shellmate.client.urllib.request.urlopen",
+        with patch("shellmate.client._open",
                    side_effect=lambda *a, **k: _Resp(json.dumps(next(replies)).encode())):
             evs = list(client._stream_cloud("q", MODE_NL2CMD, None, force=True))
         done = [e for e in evs if e.kind == "done"]
@@ -149,7 +149,7 @@ class TestCloudCandidateChain(unittest.TestCase):
             sent.append(json.loads(req.data.decode())["model"])
             return _Resp(json.dumps(_reply(GOOD)).encode())
 
-        with patch("shellmate.client.urllib.request.urlopen", side_effect=_fake):
+        with patch("shellmate.client._open", side_effect=_fake):
             # policy_fetch=False 会在 _stream_cloud 里覆盖 team_policy，改用 patch
             with patch("shellmate.policy.fetch_policy",
                        return_value=TeamPolicy(disabled_models=["off"], source="gateway")):
@@ -172,14 +172,14 @@ class TestCloudCandidateChain(unittest.TestCase):
                 raise urllib.error.HTTPError("u", 403, "Forbidden", {}, io.BytesIO(b""))
             return _Resp(json.dumps(_reply(GOOD)).encode())
 
-        with patch("shellmate.client.urllib.request.urlopen", side_effect=_fake):
+        with patch("shellmate.client._open", side_effect=_fake):
             evs = list(ModelClient(cfg, _env())._stream_cloud("q", MODE_NL2CMD, None, force=True))
         self.assertEqual([e for e in evs if e.kind == "done"][0].result.cloud_model, "on")
 
     def test_all_candidates_exhausted_raises(self):
         cfg = _cfg(cloud_models_deep="m1,m2", cloud_model_deep="m1",
                    cloud_model="glm-4-flash", cloud_models_light="m1")
-        with patch("shellmate.client.urllib.request.urlopen",
+        with patch("shellmate.client._open",
                    side_effect=lambda *a, **k: _Resp(json.dumps(_reply(BAD)).encode())):
             with self.assertRaises(Exception):
                 list(ModelClient(cfg, _env())._stream_cloud("q", MODE_NL2CMD, None, force=True))
@@ -193,7 +193,7 @@ class TestCloudCandidateChain(unittest.TestCase):
             sent.append(json.loads(req.data.decode())["model"])
             return _Resp(json.dumps(_reply(GOOD)).encode())
 
-        with patch("shellmate.client.urllib.request.urlopen", side_effect=_fake):
+        with patch("shellmate.client._open", side_effect=_fake):
             list(ModelClient(cfg, _env())._stream_cloud("q", MODE_NL2CMD, None, force=True))
         self.assertEqual(sent[0], "Z")
 

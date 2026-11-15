@@ -61,6 +61,24 @@ def _get_json(url: str, timeout: float, token: str = "") -> Any:
     if token:
         headers["X-API-Token"] = token
     req = urllib.request.Request(url, headers=headers, method="GET")
+    # 本地网关（127.0.0.1 / WSL 子网）强制不走系统代理，避免 Windows 上
+    # HTTPS_PROXY 等把 localhost 请求劫持到离线代理导致连接失败。
+    host = urlsplit(url).hostname or ""
+    is_local = (
+        host in ("127.0.0.1", "localhost", "::1")
+        or host.startswith("127.")
+        or host.startswith("172.")
+        or host.startswith("192.168.")
+        or host.startswith("10.")
+    )
+    opener = (
+        urllib.request.build_opener(urllib.request.ProxyHandler({}))
+        if is_local
+        else urllib.request
+    )
+    if is_local:
+        with opener.open(req, timeout=timeout) as resp:
+            return json.loads(resp.read().decode("utf-8"))
     with urllib.request.urlopen(req, timeout=timeout) as resp:
         return json.loads(resp.read().decode("utf-8"))
 

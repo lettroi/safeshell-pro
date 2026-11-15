@@ -17,17 +17,21 @@
 
 ## 快速开始
 
+**主工作区：`/root/safeshell-pro`（WSL2 ext4，2026-11-15 迁移完成）**。源码、数据、构建与运行都在 WSL 内；Windows 侧原目录已转为只读归档。
+
 ```bash
-# Windows（WSL2 + Docker）：双击
-release/mc_src/install.bat
+cd /root/safeshell-pro/release/mc_src
+bash install.sh              # 检查环境 → 构建 → 启动 → 健康检查
+bash install.sh status       # 容器状态
+bash install.sh doctor       # 诊断 Docker / 端口 / 网络模式 / NAT
+bash install.sh fix-network  # WSL dockerd 的 bridge NAT 兜底修复（幂等）
 
-# WSL / Linux / macOS
-cd release/mc_src && bash install.sh
-
-# 打开 http://127.0.0.1:8772   （8000 是本机禁用端口，勿用）
+# 浏览器打开 http://127.0.0.1:8772   （8000 是本机禁用端口，勿用）
 ```
 
-WSL2 原生 dockerd 用户请**保持一个常驻终端窗口**：双击 `release/mc_src/keep-wsl.bat` 后最小化即可（详见用户手册 §1.2）。
+- `install.bat` / `keep-wsl.bat` 仍保留，但只是 **Windows 转发器（legacy）**：真正的主入口是 WSL 里的 `bash install.sh`。
+- WSL2 需要**保持一个常驻终端窗口**：`bash keepalive.sh`（或双击 `keep-wsl.bat` 后最小化），否则实例休眠会重启容器、Windows 侧出现间歇 502。
+- 网络统一用 **bridge**。若容器出不了网，先执行 `bash install.sh fix-network`（根因通常是 dockerd 以 `--iptables=false` 启动，缺 MASQUERADE / DNAT），**不要**直接退化到 host 模式。
 
 首次安装不需要任何密钥，默认演示模式可体验全部界面；按页内向导填入自己的免费 API Key 后切换为真实模型。
 

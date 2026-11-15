@@ -1,6 +1,7 @@
 # SafeShell Pro 用户手册
 
-> 版本：2026-11-15（含当日免费化与改进路线更新）｜ 适用：网关 + 控制台 `release/mc_src`，客户端 `ShellMate-V1.0-交接包/shellmate`
+> 版本：2026-11-15（含免费化、改进路线、dockerd 网络修复与 WSL 迁移）｜ **主工作区：`/root/safeshell-pro`（WSL2 ext4）**，Windows 侧 `C:\Users\...\软件开发` 已转为只读归档
+> 适用：网关 + 控制台 `release/mc_src`，客户端 `ShellMate-V1.0-交接包/shellmate`
 > 一句话：把自然语言变成**经过安全门控**的运维命令，推理走免费大模型（实付 0 元）、全程可审计。
 > **完全免费 · AGPL-3.0 全量开源**：软件 0 元、无付费档、无需注册、无官方托管与 SLA。全部功能（含团队控制台、审计、策略、限流）一次给全；唯一需要自备的是各厂商免费 API Key。
 > 配套阅读：[`SafeShellPro-评估与改进路线.md`](SafeShellPro-评估与改进路线.md)（性能、选型、Docker 理由、改进路线）、[`SafeShellPro-商业项目方案.md`](SafeShellPro-商业项目方案.md)（技术方案与 2026-11-15 定位变更）、[`release/mc_src/LICENSE`](release/mc_src/LICENSE)（AGPL-3.0 全文）。
@@ -33,18 +34,18 @@
 
 ### 1.2 一键安装
 
-**Windows（最简单）**：进入 `release/mc_src/`，**双击 `install.bat`**。
-
-脚本会自动：检查 WSL/Docker → 生成 `.env`（仅占位符、无密钥）→ 识别 WSL 原生 dockerd 并设好网络模式 → 构建镜像 → 启动容器 → 等健康检查 → 打印访问地址。首次约 1–3 分钟（要下载 Node/Python 基础镜像与依赖）。
-
-**WSL / Linux / macOS**：
+**主入口是 WSL（代码已迁到 ext4）**：
 
 ```bash
-cd release/mc_src
+cd /root/safeshell-pro/release/mc_src
 bash install.sh
 ```
 
-**命令行子命令**（Windows 用 `install.bat <子命令>`，WSL 用 `bash install.sh <子命令>`）：
+脚本自动：检查 Docker → 生成 `.env`（仅占位符、无密钥）→ 检查 bridge NAT → 构建镜像 → 启动容器 → 等健康检查 → 打印地址。首次约 1–3 分钟（需下载 Node/Python 基础镜像与依赖）。
+
+**Windows 侧**：`install.bat` 仍可双击，但它只是转到 WSL 的**转发器（legacy）**；`keep-wsl.bat` 用于保持常驻窗口。Windows 侧原工作区已只读归档，请勿再从那里启动服务（会与 WSL 主工作区抢 8772）。
+
+**命令行子命令**（`bash install.sh <子命令>`）：
 
 | 子命令 | 作用 |
 |---|---|
@@ -53,14 +54,15 @@ bash install.sh
 | `logs` | 跟随日志（`Ctrl-C` 退出查看，不停服务） |
 | `stop` | 停止并移除容器，**保留 `data/` 与 `logs/`** |
 | `restart` | 重启服务 |
-| `doctor` | 诊断 Docker / WSL / 端口 / 网络模式 / 凭据文件 |
+| `doctor` | 诊断 Docker / WSL / 端口 / 网络模式 / bridge NAT / 凭据文件 |
+| `fix-network` | 修复 WSL dockerd 的 bridge NAT（幂等；见 §5） |
 | `keepalive` | **常驻 WSL 会话**：每 30s 守护 dockerd + 容器 + health（见下） |
 | `keepalive-once` | 只做一轮检查与自愈后退出 |
 | `keepalive-stop` | 通知常驻会话退出 |
 
 #### WSL 用户必读：保持一个终端窗口常驻
 
-WSL2 在**最后一个会话退出后会休眠实例**。本环境用 host 网络（WSL 原生 dockerd 的 bridge 出站 DNS 不通），实例一休眠，容器就跟着重启，Windows 侧会间歇出现 `502`。解决办法：
+WSL2 在**最后一个会话退出后会休眠实例**。实例一休眠，容器就跟着重启，Windows 侧会间歇出现 `502`。解决办法：
 
 1. **双击 `release/mc_src/keep-wsl.bat`** —— 会打开一个标题为 `SafeShell Pro - WSL keepalive` 的窗口，**最小化即可，不要关闭**；
 2. 需要开机自动常驻：`Win+R` → 输入 `shell:startup` → 把 `keep-wsl.bat` 的快捷方式放进去；
@@ -268,7 +270,7 @@ bash install.sh stop
 | 变量 | 默认 | 说明 |
 |---|---|---|
 | `APP_PORT` | `8772` | 服务端口 |
-| `SFP_NETWORK_MODE` | `bridge` | WSL2 原生 dockerd 需设 `host`（见 §5） |
+| `SFP_NETWORK_MODE` | `bridge` | 统一用 bridge；WSL 原生 dockerd 若 NAT 缺失，跑 `bash install.sh fix-network`，不要改 host |
 | `RAW_RPM_PER_CLIENT` | `30` | 按客户端限流（0=不限），对齐 GLM 免费档 |
 | `RAW_UPSTREAM_TIMEOUT_S` | `60` | 上游全局超时，覆盖 GLM-4-9B-0414 冷启动 |
 | `RAW_MODEL_TIMEOUTS` | 见 `.env.example` | 按模型分级超时的 JSON（快模型 12s、慢模型 45–50s）；未命中用全局值 |
@@ -285,9 +287,9 @@ bash install.sh stop
 |---|---|---|
 | 双击 `install.bat` 提示 WSL 未就绪 | WSL 未启动 / 首次唤醒 | 先手动运行一次 `wsl`，再双击 |
 | 提示 `docker daemon unreachable` | WSL 隔夜休眠，dockerd 未自启（`/etc/profile.d` 只在 login shell 触发自启） | 在 WSL 里执行 `service docker start`；一键脚本已用 `bash -lc` + 重试 + 自动拉起处理 |
-| **Windows 侧间歇 502 / 连接被重置，容器日志反复出现 "Started server process"** | WSL2 **没有常驻会话时实例反复休眠/重建**，host 网络容器随之重启 | **双击 `keep-wsl.bat` 保持一个常驻 WSL 终端窗口（最小化即可）**，见 §1.2；脚本每 30s 自愈 dockerd/容器/health。或改用 Docker Desktop（bridge 正常） |
-| 容器内 `pip install` / `npm ci` 解析不了域名 | WSL2 原生 dockerd 的 bridge 出站 DNS 不通 | 构建期已固定 `build.network: host`；运行期在 `.env` 设 `SFP_NETWORK_MODE=host` |
-| host 模式提示 `Published ports are discarded` | compose 在 host 网络下忽略 `ports` | **正常告警**，服务直接监听宿主 8772，`127.0.0.1:8772` 照常可访问 |
+| **Windows 侧间歇 502 / 连接被重置，容器日志反复出现 "Started server process"** | WSL2 **没有常驻会话时实例反复休眠/重建**，容器随之重启（与网络模式无关） | **双击 `keep-wsl.bat` 保持一个常驻 WSL 终端窗口（最小化即可）**，见 §1.2；脚本每 30s 自愈 dockerd/容器/health。或改用 Docker Desktop（bridge 正常） |
+| 容器内 `pip install` / `npm ci` 解析不了域名；bridge 容器访问不了厂商 API | dockerd 以 `--iptables=false` 启动，缺 MASQUERADE（出站）与 DNAT（端口映射） | **已修复**：去掉禁用参数、切 iptables-legacy、重启 dockerd。新环境执行 `bash install.sh fix-network` 兜底；**不要**再退回 host 模式 |
+| 提示 `Published ports are discarded` | 仅 `SFP_NETWORK_MODE=host` 时 compose 忽略 `ports` | 当前默认 bridge，不应出现；若出现说明误配，改回 bridge 并跑 `fix-network` |
 | 端口 8772 被占用 | 其他服务 | `install.sh doctor` 检查；或换 `APP_PORT`（并同步 §4.3） |
 | 模型返回 `403 / MODEL_DISABLED` | 管理员停用了该模型 | 控制台「免费模型清单」点「启用」，或改用其他模型 |
 | `429 / MODEL_COOLDOWN` | 该模型刚超时/过载，自动熔断中 | 无需处理，客户端会自动切下一个；5 分钟后自动恢复 |
@@ -354,7 +356,8 @@ curl -X POST http://127.0.0.1:8772/api/v1/raw/completions \
 
 | 项 | 位置 / 值 |
 |---|---|
-| 一键安装 | `release/mc_src/install.bat`（Windows）、`install.sh`（WSL/Linux） |
+| 主工作区 | **`/root/safeshell-pro`**（WSL2 ext4）；Windows 侧原目录为只读归档 |
+| 一键安装 | `bash install.sh`（WSL 主入口）；`install.bat` 为 Windows 转发器（legacy） |
 | WSL 常驻保活 | `release/mc_src/keep-wsl.bat`（双击）、`keepalive.sh`、`install.sh keepalive` |
 | 许可证 | `release/mc_src/LICENSE`（AGPL-3.0 全文） |
 | 网关源码 | `release/mc_src/server/`（`raw.py` 透传、`db.py` 审计哈希链、`cache.py` 缓存、`rate_limit.py`；`gate` 在客户端侧） |

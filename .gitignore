@@ -49,6 +49,7 @@ web/dist/
 
 # 本机归档交付包（含 venv，约 9MB；仅本地保留，不入源码仓库）
 release/*.zip
+release/backup/
 
 # 原课程作业的静态原型 / 技能模板（与产品无关，且文件名编码已损坏）
 release/mc_src/00-*/

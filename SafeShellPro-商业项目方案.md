@@ -189,3 +189,11 @@ ShellMate CLI（团队模式连网关）+ 网关（免费额度路由 + 审计�
 | P1-4 | `keepalive` 子命令 + `.bat` 常驻窗口 + `doctor` 提示 | `install.sh` / `keep-wsl.bat` |
 
 **明确不做（并说明理由）**：P0-2 Redis 多副本状态外置——免费自部署是单实例，多副本一致性属 SaaS 场景；完整多租户/SSO——本地部署下 `X-Client-ID` 仅用于归因，公开部署用轻量令牌即可；P2 全部定价/GTM/企业版——与「不收费」决策冲突。
+
+### 12.5 2026-11-15 后续：开源上线、网络修复、WSL 迁移
+
+- **GitHub 第一版**：新建公开仓库 [`lettroi/safeshell-pro`](https://github.com/lettroi/safeshell-pro)，128 文件 / 2.23MB，上传前做了两轮密钥审计（`githubtoken.txt`、`*.db`、`.env`、venv、node_modules、zip、`.workbuddy/` 全部排除，远端复核为 0 命中）。因 Windows Git 的 Schannel 吊销检查 + `github.com` 被 hosts 劫持，常规 `git push` 不可用，改用 GitHub Git Data API 建 blob/tree/commit/ref。
+- **dockerd 网络修复**：根因是 WSL 自启脚本以 `dockerd --iptables=false --ip6tables=false` 启动，缺 MASQUERADE（bridge 出站）与 DNAT（端口映射）。已切 `iptables-legacy`、去掉禁用参数、重启 dockerd；`SFP_NETWORK_MODE` 回到标准 **bridge**，Windows→8772→真实模型全链路 200。新增 `install.sh fix-network` 与 `keepalive.sh` 的幂等兜底；`install.sh` 不再自动退化到 host。
+- **代码迁移**：主工作区迁至 **`/root/safeshell-pro`（WSL2 ext4）**，Windows 侧原目录转只读归档；`data/margin.db`（含真实 Key）与 `.env` 随迁、脚本可执行位修正；容器改由 WSL 目录的 compose 启动。Windows 侧 `.bat` 降级为转发器（legacy）。
+- **第二版提交**：迁移后的路径/网络文档、脚本与台账变更推送到同一仓库，形成「迁移前 / 迁移后」两版可对比历史。
+- 仍需常驻 WSL 会话（实例休眠属 VM 生命周期，与代码位置、网络模式无关）。

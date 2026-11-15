@@ -6,6 +6,17 @@
 
 ## [Unreleased]
 
+### Changed（2026-11-15 下午 · 部署形态，影响运行方式）
+
+- **主工作区迁移到 WSL2 ext4 `/root/safeshell-pro`**：源码、`data/margin.db`（真实 Key）、`.env` 随迁；Windows 侧原目录转为只读归档；`install.bat` / `keep-wsl.bat` 降级为 Windows 转发器（legacy），主入口改为 `bash install.sh`。根 `README`、用户手册、方案文档、迁移评估、网关 README 的路径与入口说明同步更新。
+- **dockerd bridge 网络修复，不再需要 host 模式**：根因是 WSL 自启脚本 `/etc/profile.d/docker-auto.sh` 以 `dockerd --iptables=false --ip6tables=false` 启动，导致缺 MASQUERADE（容器出不了网）与 DNAT（`-p 8772:8772` 进不来）。已切 `iptables-legacy`、去掉禁用参数、重启 dockerd（Docker 自建 `DOCKER` 链 / MASQUERADE / DNAT）；`SFP_NETWORK_MODE=bridge` 实测 Windows 侧 8772 与真实模型调用均 200。`install.sh` 不再自动写 `host`，`docker-compose.yml` / `.env.example` / 手册注释同步。
+- **新增 `bash install.sh fix-network`**：幂等补 MASQUERADE 的兜底命令（检测已有规则即跳过），`keepalive.sh` 每轮同样检查；WSL 自启脚本也做了幂等兜底，实例重建后自动恢复。
+
+### Added（2026-11-15 下午 · 开源仓库）
+
+- 根 `.gitignore`（密钥 / `*.db` / `.env` / venv / node_modules / zip / `.workbuddy/` / `githubtoken.txt` 全排除）、`.gitattributes`（`*.sh` 锁 LF、`*.bat` 锁 CRLF、二进制标记）、根 `README.md`（项目总览 / 快速开始 / 文档索引 / 许可）。
+- 公开仓库 [`lettroi/safeshell-pro`](https://github.com/lettroi/safeshell-pro)：迁移前第一版提交，迁移后第二版提交。
+
 ### Changed（2026-11-15 · 产品定位）
 
 - **完全免费 · AGPL-3.0 全量开源**：不收费、不设付费档、不提供官方托管与 SLA。新增 `LICENSE`（AGPL-3.0 全文）；落地页三档定价改为「完全免费 · 没有付费版」说明卡；团队控制台标题与文案去掉商业化口径。所有功能一次给全。

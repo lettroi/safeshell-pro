@@ -86,7 +86,7 @@
 | Windows（WSL2 + Docker） | **双击 `install.bat`** |
 | WSL / Linux / macOS | `bash install.sh` |
 
-脚本自动完成：环境检查 → 从 `.env.example` 生成 `.env`（纯占位符）→ 识别 WSL 原生 dockerd 并写 `SFP_NETWORK_MODE=host` → 构建镜像（前端在构建期编译进镜像）→ 启动 → 健康检查 → 打印地址。
+脚本自动完成：环境检查 → 从 `.env.example` 生成 `.env`（纯占位符）→ 检查 bridge NAT（缺失则自动 `fix-network`）→ 构建镜像（前端在构建期编译进镜像）→ 启动 → 健康检查 → 打印地址。
 
 常用子命令（Windows 用 `install.bat <子命令>`，WSL 用 `bash install.sh <子命令>`）：
 
@@ -99,7 +99,7 @@ bash install.sh doctor     # 诊断 Docker / WSL / 端口 / 网络模式
 bash install.sh keepalive  # 常驻 WSL 会话：守护 dockerd + 容器 + health
 ```
 
-> **WSL 用户必读**：WSL 在最后一个会话退出后会休眠实例，host 网络容器随之重启，Windows 侧会间歇 502。**双击 `keep-wsl.bat` 保持一个常驻终端窗口（可最小化）**，或执行 `bash install.sh keepalive`；需要开机自动常驻就把 `keep-wsl.bat` 的快捷方式放进 `shell:startup`。用 `bash install.sh keepalive-stop` 结束。
+> **WSL 用户必读**：WSL 在最后一个会话退出后会休眠实例，容器随之重启，Windows 侧会间歇 502（与 bridge/host 无关，是 VM 生命周期）。**双击 `keep-wsl.bat` 保持一个常驻终端窗口（可最小化）**，或执行 `bash install.sh keepalive`；需要开机自动常驻就把 `keep-wsl.bat` 的快捷方式放进 `shell:startup`。用 `bash install.sh keepalive-stop` 结束。
 
 等价的手工命令：
 
@@ -114,7 +114,7 @@ docker compose down                        # 停止并移除容器
 
 `docker-compose.yml` 把 `./data`、`./logs` 挂为可写卷；SQLite 与日志落在宿主机，容器重建不丢数据。前端 `web/dist` 由镜像内置，不挂卷。`.dockerignore` 已排除含真实 Key 的 `data/`、`.env`、`venv/`、`web/node_modules/`，**镜像内零凭据**。
 
-> **WSL2 原生 dockerd 注意**：其 bridge 网络出站 DNS 可能不通（构建期 `pip install` / `npm ci` 与运行时模型调用全失败）。已内置适配：构建期 `build.network: host`，运行期 `.env` 设 `SFP_NETWORK_MODE=host`（host 模式下 compose 的 `ports` 被忽略属正常告警，服务直接监听宿主 8772）。标准 Docker / Docker Desktop 用默认 `bridge` 即可。
+> **WSL2 原生 dockerd 注意**：若 bridge 出站/入站不通，根因通常是 dockerd 以 `--iptables=false` 启动（缺 MASQUERADE 与 DNAT）。执行 `bash install.sh fix-network` 或修正 dockerd 启动参数即可，统一用 **bridge**，不要退化到 host。构建期 `build.network: host` 仍保留以确保镜像可拉取依赖。
 
 ### 方式 B：本地虚拟环境（开发用）
 
@@ -307,8 +307,9 @@ release/mc_src/        （历史文档里称 fullstack/）
 ### WSL2 原生 Docker 网络
 
 WSL2 内直接跑 dockerd 时，默认 bridge 网络的出站 DNS 可能整体失效（容器内解析不了厂商域名，`npm ci` / `pip install` / 真实模型调用全失败）。已内置两处适配：
-- 构建期：`docker-compose.yml` 的 `build.network: host`。
-- 运行期：`.env` 设 `SFP_NETWORK_MODE=host`（`bridge` 为标准 Docker / Docker Desktop 默认值）。host 模式下 compose 的 `ports` 会被忽略并给出告警，但服务直接监听宿主 8772，Windows 侧 `127.0.0.1:8772` 照常可访问。
+- 构建期：`docker-compose.yml` 的 `build.network: host`（保证 npm/pip 能拉依赖）。
+- 运行期：统一 `SFP_NETWORK_MODE=bridge`，`ports` 映射生效，Windows 侧 `127.0.0.1:8772` 可达。
+- 若 dockerd 以 `--iptables=false` 启动导致 NAT 缺失，`bash install.sh fix-network` 幂等补规则；修正 dockerd 启动参数后可彻底免维护。
 
 `.dockerignore` 排除了 `data/`（`margin.db` 含真实 Key）、`venv/`、`web/node_modules/` 等，镜像内不含任何凭据；Key 通过 `./data` 卷挂载或接入向导写入。
 

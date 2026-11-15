@@ -34,6 +34,29 @@ RISK_LEVELS = {"SAFE", "CAUTION", "DENY"}
 # 云端兜底错误专用话术（避免显示 Ollama 那套「本机没装模型」的指引）
 _CLOUD_ERR = {"prefix": "云端模型暂不可用", "hint": ModelUnavailableError.CLOUD_HINT}
 
+# 本客户端只与本地服务（Ollama / 本地网关）通信。Windows 上常存在 HTTPS_PROXY 等
+# 环境变量，urllib 默认会把 127.0.0.1 / WSL 子网也路由到该代理；一旦代理离线就会
+# 出现「积极拒绝 (os error 10061)」。这里对本地地址强制不走代理，远程网关仍走默认
+# （尊重系统代理），兼顾本地优先与将来可能的远程网关。
+_NO_PROXY_OPENER = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+
+
+def _open(req: "urllib.request.Request", timeout: float):
+    import urllib.parse
+
+    host = urllib.parse.urlparse(req.full_url).hostname or ""
+    is_local = (
+        host in ("127.0.0.1", "localhost", "::1")
+        or host.startswith("127.")
+        or host.startswith("172.")
+        or host.startswith("192.168.")
+        or host.startswith("10.")
+        or host.startswith("[::1]")
+    )
+    if is_local:
+        return _NO_PROXY_OPENER.open(req, timeout=timeout)
+    return urllib.request.urlopen(req, timeout=timeout)
+
 
 @dataclass
 class Param:
@@ -394,7 +417,7 @@ class ModelClient:
         parser = _LineProtocolParser()
         raw_parts: list[str] = []
         try:
-            with urllib.request.urlopen(req, timeout=self.cfg.timeout) as resp:
+            with _open(req, timeout=self.cfg.timeout) as resp:
                 for line in resp:
                     if not line.strip():
                         continue
@@ -513,7 +536,7 @@ class ModelClient:
                 method="POST",
             )
             try:
-                with urllib.request.urlopen(req, timeout=self.cfg.timeout) as resp:
+                with _open(req, timeout=self.cfg.timeout) as resp:
                     return json.loads(resp.read().decode("utf-8"))
             except urllib.error.HTTPError as exc:
                 # 403 = 网关按团队政策停用了该模型；429/5xx = 过载 / 上游抖动。

@@ -13,12 +13,12 @@
 | 项 | 值 |
 |---|---|
 | 机器 / 系统 | Windows 11 + WSL2（Ubuntu 24.04.5），Docker 29.8.2 |
-| 部署形态 | 单容器 `safeshell-pro-app`，host 网络，单端口 8772，SQLite 卷挂载 |
+| 部署形态 | 单容器 `safeshell-pro-app`，**bridge 网络**（2026-11-15 修复 dockerd 后），单端口 8772，SQLite 卷挂载 |
 | 上游 | 智谱 BigModel + 硅基流动，6 个免费模型，真实网络调用 |
 | 网关端点 | 本机回环，每端点 5 次取 p50；真实模型每模型 2 次 `max_tokens=16` 极小请求 |
 | 时间戳 | 2026-11-15 08:2x（网关端点 / 模型基准）；11-14 的对比数据单独标注 |
 
-> ⚠️ 测量中发现 **WSL2 无保持会话时实例会反复休眠/重建**，host 网络容器随之重启，跨 Windows 边界的请求会出现短暂 502 / `RemoteProtocolError`。最终数据取自**单个 WSL 会话内等待就绪后**的完整采样。该现象本身是 WSL 部署的已知约束，见 §3.3 与手册 §5。
+> ⚠️ 测量中发现 **WSL2 无保持会话时实例会反复休眠/重建**，容器随之重启，跨 Windows 边界的请求会出现短暂 502 / `RemoteProtocolError`。最终数据取自**单个 WSL 会话内等待就绪后**的完整采样。该现象本身是 WSL 部署的已知约束，见 §3.3 与手册 §5。
 
 ### 1.2 网关自身开销（不含模型推理）
 
@@ -165,11 +165,11 @@
 
 | 问题 | 处理 | 代价 |
 |---|---|---|
-| WSL2 原生 dockerd 的 **bridge 出站 DNS 不通**（`pip install` / `npm ci` / 模型调用全失败） | 构建期 `build.network: host`；运行期 `.env` 设 `SFP_NETWORK_MODE=host` | host 模式下 compose 的 `ports` 被忽略（有告警），服务直接监听宿主 8772 |
+| ~~WSL2 原生 dockerd 的 **bridge 出站不通**~~（**2026-11-15 已修复**） | 根因：dockerd 以 `--iptables=false` 启动，缺 MASQUERADE（出站）与 DNAT（端口映射）。已切 iptables-legacy、去掉禁用参数并重启 dockerd；新环境 `bash install.sh fix-network` 兜底 | 统一用 **bridge**，`ports` 映射正常，Windows 侧 8772 可达 |
 | WSL 无保持会话时**实例休眠 → 容器反复重启**，Windows 侧可能短暂 502 | 保持一个 WSL 终端常驻；或改用 Docker Desktop（bridge 正常）；或把服务交给 systemd/常驻进程 | 需要在目标机器固定一个保持活跃的方案 |
 | 标准 Docker / Docker Desktop | 用默认 `bridge`，`ports` 映射生效 | 无 |
 
-脚本已把这些判断自动化：`install.sh` 会识别 WSL 原生 dockerd 并自动写入 `SFP_NETWORK_MODE=host`，`install.bat doctor` 可诊断。
+脚本已自动化：`install.sh` 默认 bridge，检测到 NAT 缺失时自动执行 `fix-network`；`install.sh doctor` 可诊断 MASQUERADE 规则数。
 
 ### 3.4 什么时候**不该**用 Docker
 
@@ -282,6 +282,8 @@
 | P0-1 鉴权 | ✅ 轻量版 | 可选共享令牌（默认关）；**完整多租户/SSO 判定不需要** |
 | P0-2 状态外置 | ⛔ 不需要 | 免费自部署单实例；Redis 多副本属 SaaS 场景 |
 | P2 商业化 | ⛔ 作废 | 与「不收费」决策冲突 |
+| dockerd bridge 网络 | ✅ 已修复 | 根因 `--iptables=false` 缺 MASQUERADE/DNAT；切 iptables-legacy、去掉禁用参数、重启 dockerd，统一 bridge（§3.3 结论已更新） |
+| WSL ext4 迁移（方案 A） | ✅ 已落地 | 主工作区 `/root/safeshell-pro`，Windows 侧只读归档；GitHub 迁移前/后两版提交 |
 
 **仍然值得做的下一步（按性价比）**：
 

@@ -41,8 +41,22 @@ ensure_container() {
   docker compose up -d >/dev/null 2>&1 || true
 }
 
+ensure_nat() {
+  # WSL 原生 dockerd 常以 --iptables=false 启动，不建 MASQUERADE，
+  # bridge 容器会整个出不了网（DNS + 直连 IP 全超时）。幂等补规则。
+  # 非 root 或标准 Docker Desktop 环境会静默跳过，不影响主流程。
+  command -v iptables-legacy >/dev/null 2>&1 || return 0
+  local subnet
+  subnet=$(docker network inspect bridge \
+    --format '{{(index .IPAM.Config 0).Subnet}}' 2>/dev/null | tr -d '\r')
+  [ -n "$subnet" ] || subnet=172.17.0.0/16
+  iptables-legacy -t nat -S POSTROUTING 2>/dev/null | grep -q MASQUERADE \
+    || iptables-legacy -t nat -A POSTROUTING -s "$subnet" -j MASQUERADE 2>/dev/null || true
+}
+
 one_pass() {
   if ! ensure_daemon; then log "WARN docker daemon still unreachable"; return 1; fi
+  ensure_nat
   ensure_container
   if curl -fsS --max-time 3 "http://127.0.0.1:${APP_PORT}/api/v1/health" >/dev/null 2>&1; then
     log "OK  service healthy on ${APP_PORT}"
