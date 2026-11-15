@@ -21,6 +21,15 @@ CONTAINER="safeshell-pro-app"
 INTERVAL="${KEEPALIVE_INTERVAL:-30}"
 FLAG=".keepalive.stop"
 
+# docker compose 工作目录：优先环境变量，其次当前目录若含 compose 文件，
+# 最后回退到已知仓库路径。这样无论 keepalive.sh 被放在哪个目录双击，
+# `docker compose up -d` 都能找到 docker-compose.yml。
+PROJECT_DIR="${SFP_COMPOSE_DIR:-}"
+if [ -z "$PROJECT_DIR" ] && [ -f docker-compose.yml ]; then
+  PROJECT_DIR="$(pwd)"
+fi
+[ -z "$PROJECT_DIR" ] && PROJECT_DIR="/root/safeshell-pro/release/mc_src"
+
 log() { printf '[keepalive %s] %s\n' "$(date +%H:%M:%S)" "$*"; }
 
 ensure_daemon() {
@@ -37,8 +46,8 @@ ensure_container() {
   if docker ps --format '{{.Names}}' 2>/dev/null | tr -d '\r' | grep -qx "$CONTAINER"; then
     return 0
   fi
-  log "container missing - bringing it back with docker compose up -d"
-  docker compose up -d >/dev/null 2>&1 || true
+  log "container missing - bringing it back with docker compose up -d (dir=$PROJECT_DIR)"
+  ( cd "$PROJECT_DIR" && docker compose up -d ) >/dev/null 2>&1 || true
 }
 
 ensure_nat() {

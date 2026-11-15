@@ -20,6 +20,9 @@ secrets/
 *.db
 *.sqlite
 *.sqlite3
+*.db-journal
+*.db-wal
+*.db-shm
 data/*.db
 data/*.db-*
 logs/
