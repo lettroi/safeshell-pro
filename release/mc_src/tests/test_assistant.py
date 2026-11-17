@@ -179,3 +179,76 @@ def test_generate_endpoint_empty_query():
     r = client.post("/api/v1/assistant/generate", json={"query": ""})
     assert r.status_code == 200
     assert r.json()["ok"] is False
+
+
+# ---- 2026-11-17 修复回归 ----
+def test_parse_multiple_commands():
+    """多行 COMMAND：每条命令各占一行，commands 列表保留全部，command 用 \n 连接。"""
+    raw = ("EXPLAIN: 先找再删\n---\nCOMMAND: find /tmp -name '*.log'\nfind /tmp -name '*.tmp' -delete\n"
+           "RISK: CAUTION\nREASON: 含删除\nPARAMS: find=查找")
+    p = assistant.parse_line_protocol(raw)
+    assert len(p.commands) == 2
+    assert p.commands[0] == "find /tmp -name '*.log'"
+    assert p.commands[1] == "find /tmp -name '*.tmp' -delete"
+    assert "\n" in p.command
+
+
+def test_placeholder_path_is_caution():
+    """编造的占位符路径必须被标记，避免小白复制后报「文件不存在」。"""
+    v = assistant.gate_check("cat /path/to/temp/env")
+    assert v.level == "CAUTION"
+    assert "CAUTION-PLACEHOLDER" in v.matched_rules
+    assert "占位符" in v.consequences
+
+
+def test_real_path_not_flagged():
+    """真实路径不应误报占位符。"""
+    v = assistant.gate_check("cat /tmp/env")
+    assert "CAUTION-PLACEHOLDER" not in v.matched_rules
+
+
+def test_simulate_find_delete_is_delete_not_read():
+    """find -delete 必须模拟为删除（不可逆），不能说成只读。"""
+    s = assistant.simulate_command("find /tmp -name '*.log' -delete")
+    assert any(e["kind"] == "delete" for e in s["effects"])
+    assert s["reversible"] == "不可逆"
+
+
+def test_delete_command_not_rewritten_by_gate():
+    """门控只标记风险、不篡改意图：合法的删除命令原样保留为 CAUTION。"""
+    v = assistant.gate_check("rm /tmp/env")
+    assert v.level == "CAUTION"
+    assert "CAUTION-DELETE" in v.matched_rules
+
+
+def test_per_command_gating_blocks_only_dangerous_line(monkeypatch):
+    """逐条门控：一条 DENY 不影响另一条只读命令。"""
+    demo = {
+        "model": "demo", "demo": True,
+        "choices": [{"message": {"content":
+            "EXPLAIN: 两条命令\n---\nCOMMAND: ls /tmp\nrm -rf /var\nRISK: CAUTION\nREASON: 含删除\nPARAMS: ls=列出"
+        }}],
+    }
+    async def fake_raw(req):
+        return demo
+    monkeypatch.setattr(assistant.raw, "raw_completion", fake_raw)
+    r = client.post("/api/v1/assistant/generate", json={"query": "列目录再删系统目录"})
+    assert r.status_code == 200
+    data = r.json()
+    assert data["ok"] is True
+    assert len(data["commands"]) == 2
+    assert data["commands"][0]["blocked"] is False
+    assert data["commands"][1]["blocked"] is True
+    assert data["commands"][1]["text"] == ""  # DENY 清空
+    assert "/var" not in data["command"]  # 整体文本不含被拦截命令
+    assert data["risk"] == "DENY"
+
+
+def test_prompt_no_longer_rewrites_intent():
+    """提示词不得再包含「给只读替代/不要给破坏性命令」这类会篡改意图的措辞。"""
+    sys = assistant.build_system_prompt()
+    usr = assistant.build_user_prompt("删除临时目录下的只读env文件")
+    combined = sys + usr
+    assert "不要给破坏性命令" not in combined
+    assert "把「删除」换成「查看」" in sys  # 明确禁止换意图
+    assert "忠实" in combined

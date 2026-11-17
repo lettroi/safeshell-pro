@@ -53,6 +53,13 @@
     font-size:15px;word-break:break-all}
   .copy{background:#24304a;color:#cbd6ea;border-radius:8px;padding:7px 12px;font-size:12.5px;white-space:nowrap}
   .copy:hover{background:#324261;color:#fff}
+  .cmd-item{margin-bottom:14px;padding-bottom:14px;border-bottom:1px dashed var(--line)}
+  .cmd-item:last-child{border-bottom:0;margin-bottom:0;padding-bottom:0}
+  .cmd-item .risk{margin-right:10px}
+  .cmd-no{font-size:12px;color:var(--muted);font-weight:600;margin-right:10px}
+  .cmdbox.blocked{background:#3a1a1a;opacity:.92}
+  .cmdbox.blocked code{color:#ffb4ad;text-decoration:line-through}
+  .blocked-tag{background:var(--deny);color:#fff;border-radius:6px;padding:4px 9px;font-size:12px;white-space:nowrap}
   .risk{display:inline-flex;align-items:center;gap:7px;border-radius:999px;padding:6px 13px;font-size:13px;font-weight:700}
   .risk .tag{width:8px;height:8px;border-radius:50%;background:currentColor}
   .risk.SAFE{color:var(--safe);background:var(--safe-bg)}
@@ -164,6 +171,19 @@ async function ask(){
   }
 }
 
+function riskLabel(r){return r==="SAFE"?"安全 · 只读":r==="CAUTION"?"注意 · 请确认":"危险 · 已拦截";}
+
+function renderCommandBlock(item, idx, total){
+  const blocked = item.blocked;
+  const text = blocked ? item.original : item.text;
+  const badge = `<span class="risk ${esc(item.risk)}"><span class="tag"></span>${riskLabel(item.risk)}</span>`;
+  const cmd = blocked
+    ? `<div class="cmdbox blocked"><code>${esc(item.original)}</code><span class="blocked-tag">已拦截</span></div>`
+    : `<div class="cmdbox"><code>${esc(text)}</code><button class="copy" data-cmd="${esc(text)}" onclick="copyCmd(this)">复制</button></div>`;
+  const n = total>1 ? `<span class="cmd-no">第 ${idx+1} / ${total} 条</span>` : "";
+  return `<div class="cmd-item">${n}${badge}${cmd}${blocked?`<div class="err" style="margin-top:8px">这条命令命中不可逆规则，已拒绝输出，请勿执行。${item.consequences?esc(item.consequences):""}</div>`:""}</div>`;
+}
+
 function render(d){
   if(!d.ok){
     return `<div class="card"><h2>没能生成命令</h2><div class="err">${esc(d.error||"未知错误")}</div>
@@ -171,9 +191,11 @@ function render(d){
   }
   const sim = d.simulation || {};
   const riskCls = esc(d.risk);
-  const cmdHtml = d.command
-    ? `<div class="cmdbox"><code>${esc(d.command)}</code><button class="copy" onclick="copyCmd(this)">复制</button></div>`
-    : `<div class="err">该命令命中了安全规则，已拒绝输出——它涉及不可逆操作，请不要尝试执行。</div>`;
+  const items = (d.commands && d.commands.length) ? d.commands
+    : [{text:d.command, original:d.command, risk:d.risk, blocked:!d.command, simulation:sim}];
+  const cmdBlocks = items.map((it,i)=>renderCommandBlock(it,i,items.length)).join("");
+  const copyAll = items.length>1 && d.command
+    ? `<button class="copy" style="margin-top:10px" data-cmd="${esc(d.command)}" onclick="copyCmd(this)">复制全部 ${items.length} 条</button>` : "";
 
   const effects = (sim.effects||[]).map(effectCard).join("");
   const params = (d.params||[]).map(p=>`<div class="param"><code>${esc(p.token)}</code> <span>${esc(p.meaning)}</span></div>`).join("");
@@ -184,21 +206,18 @@ function render(d){
   return `
   <div class="card">
     <div class="meta">
-      <span class="risk ${riskCls}"><span class="tag"></span>${riskCls==="SAFE"?"安全 · 只读":riskCls==="CAUTION"?"注意 · 会改动":"危险 · 已拦截"}</span>
+      <span class="risk ${riskCls}"><span class="tag"></span>${riskLabel(riskCls)}</span>
       <span class="kv">模型 <b>${esc(d.model)}</b></span>
       ${d.demo?`<span class="kv">演示模式</span>`:""}
       ${d.unverified?`<span class="kv">含未验证命令</span>`:""}
     </div>
-    <h2>这条命令在做什么</h2>
-    <div class="explain">${esc(d.explain)}</div>
-    <h2 style="margin-top:18px">命令</h2>
-    ${cmdHtml}
-    ${params?`<h2 style="margin-top:16px">参数拆解</h2><div class="params">${params}</div>`:""}
-    ${alts?`<h2 style="margin-top:16px">更安全的做法</h2>${alts}`:""}
+    <h2>① 为你生成的命令</h2>
+    ${cmdBlocks}
+    ${copyAll}
   </div>
 
   <div class="card">
-    <div class="sim-head"><h2 style="margin:0">执行后果模拟</h2><span class="badge-sim">仅文字推演 · 不会真的执行</span></div>
+    <div class="sim-head"><h2 style="margin:0">② 执行后果模拟</h2><span class="badge-sim">仅文字推演 · 不会真的执行</span></div>
     <div class="summary">${esc(sim.summary||"")}</div>
     ${effects?`<div class="effects">${effects}</div>`:""}
     <div class="facts">
@@ -210,13 +229,20 @@ function render(d){
     ${warns?`<div class="warns">${warns}</div>`:""}
   </div>
 
+  <div class="card">
+    <h2>③ 这条命令在做什么</h2>
+    <div class="explain">${esc(d.explain)}</div>
+    ${params?`<h2 style="margin-top:16px">参数拆解</h2><div class="params">${params}</div>`:""}
+    ${alts?`<h2 style="margin-top:16px">更安全的做法</h2>${alts}`:""}
+  </div>
+
   <div class="card" style="font-size:12.5px;color:var(--muted)">
     ${esc(d.notice||"")} 模拟结果基于命令文本的静态规则推演，实际情况取决于你的文件、权限与环境；执行与否由你决定。
   </div>`;
 }
 
 function copyCmd(btn){
-  const code = btn.parentElement.querySelector("code").textContent;
+  const code = btn.getAttribute("data-cmd") || btn.parentElement.querySelector("code").textContent;
   navigator.clipboard.writeText(code).then(()=>{
     const old=btn.textContent; btn.textContent="已复制 ✓";
     setTimeout(()=>btn.textContent=old,1400);

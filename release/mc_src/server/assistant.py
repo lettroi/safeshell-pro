@@ -29,7 +29,7 @@ from . import raw
 
 LINE_PROTOCOL = """EXPLAIN: <一句中文白话解释，不超过两行，不要换行>
 ---
-COMMAND: <只写一行命令，不要代码块、不要反引号、不要前后缀说明>
+COMMAND: <可直接复制的命令；一条命令写一行，需要多条就写多行>
 RISK: <SAFE 或 CAUTION 或 DENY，你的初步判断>
 REASON: <一句话说明为什么是这个风险等级>
 PARAMS: <片段>=<含义>; <片段>=<含义>"""
@@ -45,13 +45,19 @@ def build_system_prompt() -> str:
         "你是一个耐心的 Linux 命令行老师，面向完全不懂命令行的初学者。\n"
         f"{_ENV_BLOCK}\n"
         "硬性要求：\n"
-        "- 只输出一行可直接复制的命令，不要 Markdown 代码块、不要反引号、不要客套话。\n"
+        "- 忠实完成用户的要求：用户要删除就给删除命令、要查看就给查看命令，"
+        "绝不能偷偷把用户要的操作换成另一种操作（例如把「删除」换成「查看」）。"
+        "命令是否危险由后面的安全系统判断和提示，你只负责准确表达用户的意图。\n"
+        "- COMMAND 段写可直接复制的命令，不要 Markdown 代码块、不要反引号、不要前后缀说明。"
+        "一条命令占一行；若任务确实需要多条命令才能完成，就逐行都写出来，不要合并、不要省略。\n"
         "- 用中文写白话解释，让没用过终端的人也能听懂；顺带说清这条命令会不会改动文件。\n"
-        "- 只使用真实存在的命令和参数，绝不编造选项。不确定时给最保守的只读命令。\n"
+        "- 只使用真实存在的命令和参数，绝不编造选项。\n"
+        "- 路径要真实具体：用户给了路径就用用户的路径；用户没给具体路径时，"
+        "用 /tmp、当前目录 . 等常见的真实位置，绝不要写 /path/to/、/xxx/、<路径> 这类占位符。\n"
         "- 不做任何执行动作；你只负责写出命令文本。\n"
         "- 不输出思考过程、不输出分析步骤、不输出「让我想想」。\n"
-        "- 用户问危险操作时，不要说教，给一个更安全的只读命令作为替代。\n"
-        "\n严格按下面的格式输出，每行一个字段，不要加任何其他内容：\n" + LINE_PROTOCOL
+        "- 不要说教、不要在命令前后附加安全建议；更安全的替代做法由系统统一给出。\n"
+        "\n严格按下面的格式输出，除格式字段外不要加任何其他内容：\n" + LINE_PROTOCOL
     )
 
 
@@ -63,8 +69,8 @@ def build_user_prompt(query: str, mode: str = "nl2cmd") -> str:
             f"命令：{query}"
         )
     return (
-        "任务：把下面的自然语言需求转成一条命令。若需求涉及不可逆操作，"
-        "仍要给一条更安全的只读命令作为替代，不要给破坏性命令。\n"
+        "任务：把下面的自然语言需求转成一条可直接使用的命令，忠实表达用户要做的事。"
+        "如果一条命令不够、需要多条命令按顺序完成，就把每条命令各写一行。\n"
         f"需求：{query}"
     )
 
@@ -79,16 +85,20 @@ class ParseError(Exception):
 
 @dataclass
 class ParsedCommand:
-    command: str
-    risk_level: str
-    reason: str
-    explain: str
+    command: str                              # 兼容字段：多条命令用 \n 连接
+    commands: list[str] = field(default_factory=list)  # 逐行命令
+    risk_level: str = "SAFE"
+    reason: str = ""
+    explain: str = ""
     params: list[dict[str, str]] = field(default_factory=list)
     model_risk: str = ""
 
 
 def parse_line_protocol(text: str) -> ParsedCommand:
-    """严格解析；任何必需字段缺失/非法都抛 ParseError，绝不猜测补齐。"""
+    """严格解析；任何必需字段缺失/非法都抛 ParseError，绝不猜测补齐。
+
+    COMMAND 段允许多行：每条命令占一行。RISK/REASON/EXPLAIN/PARAMS 的续行仍按空格拼接。
+    """
     raw_text = (text or "").strip()
     fields: dict[str, str] = {}
     current: str | None = None
@@ -103,13 +113,16 @@ def parse_line_protocol(text: str) -> ParsedCommand:
         for key in ("EXPLAIN", "COMMAND", "RISK", "REASON", "PARAMS"):
             prefix = key + ":"
             if stripped.startswith(prefix):
-                fields[key] = stripped[len(prefix):].strip()
+                value = stripped[len(prefix):].strip()
+                # COMMAND 多行：后续没有字段标记的行都是命令，用 \n 连接
+                fields[key] = (fields.get(key, "") + ("\n" if key == "COMMAND" and fields.get(key) else " ") + value) if fields.get(key) else value
                 current = key
                 known = True
                 break
-        # 续行：即使该字段首行为空（如模型把 PARAMS 的值写在下一行），也要收集
+        # 续行：COMMAND 用换行保留多条命令，其它字段用空格拼接
         if not known and current is not None:
-            fields[current] = (fields.get(current, "") + " " + stripped).strip()
+            sep = "\n" if current == "COMMAND" else " "
+            fields[current] = (fields.get(current, "") + sep + stripped).strip()
 
     # 核心四字段严格必填；PARAMS 只是辅助展示，缺失不应阻断命令生成
     for required in ("EXPLAIN", "COMMAND", "RISK", "REASON"):
@@ -119,9 +132,15 @@ def parse_line_protocol(text: str) -> ParsedCommand:
     command_field = fields["COMMAND"].strip()
     if "```" in command_field:
         raise ParseError("命令里混入了 Markdown 代码块")
-    command = command_field.strip("`").strip()
-    if not command or "\n" in command:
-        raise ParseError("命令行不是单行文本")
+    # 逐行清洗：每行一条命令，剥掉反引号包裹
+    commands = [ln.strip().strip("`").strip() for ln in command_field.splitlines()]
+    commands = [ln for ln in commands if ln]
+    if not commands:
+        raise ParseError("没有有效的命令行")
+    if any("\t" in ln for ln in commands):
+        # 制表符在命令里通常是排版残留，保留但不作为换行依据；这里不拦截
+        pass
+    command = "\n".join(commands)
 
     risk = fields["RISK"].strip().upper()
     if risk not in {"SAFE", "CAUTION", "DENY"}:
@@ -143,6 +162,7 @@ def parse_line_protocol(text: str) -> ParsedCommand:
 
     return ParsedCommand(
         command=command,
+        commands=commands,
         risk_level=risk,
         model_risk=risk,
         reason=fields["REASON"],
@@ -190,6 +210,11 @@ _SPLIT_RE = re.compile(r"(?:\|\||&&|;|\||\n)")
 _SUBSHELL_RE = re.compile(r"\$\(|`|>\s*/dev/(?:sd|nvme|hd|mmcblk)|:\(\)\s*\{")
 _BLOCK_DEVICE_RE = re.compile(r"^/dev/(?:sd|nvme|hd|mmcblk|loop|vd)")
 _ENV_ASSIGN_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
+# 模型编造的占位符路径：这类命令复制去执行会报「文件不存在」，必须提醒用户替换
+_PLACEHOLDER_RE = re.compile(
+    r"/path/to/|/your[_-]|/example/|<路径>|<path>|/xxx/|/placeholder/|your[_-]?(file|dir|path)|\bTODO\b",
+    re.I,
+)
 
 _CONS_DELETE = "删除不可恢复，终端里没有回收站；路径写错或变量为空时，影响范围可能远超预期。"
 _CONS_777 = "这会让本机任何账号都能改写这些文件；若目录位于共享目录或 Web 根目录下，风险更高。"
@@ -326,6 +351,10 @@ def gate_check(command: str) -> Verdict:
         return v
     if _SUBSHELL_RE.search(command):
         _record(v, "CAUTION-SUBSHELL", "CAUTION", "含命令替换或重定向到设备，执行范围不易一眼看清。")
+    if _PLACEHOLDER_RE.search(command):
+        _record(v, "CAUTION-PLACEHOLDER", "CAUTION",
+                "命令里含有占位符路径（如 /path/to/），这是模板不是真实位置，直接复制执行会报「找不到文件」；"
+                "请把它换成你自己机器上的真实路径。")
     # 跨管道/分号的模式先用整条原文判定
     if re.search(r"(?:curl|wget)[^|]*\|\s*(?:sudo\s+)?(?:ba)?sh\b", command, re.I):
         _record(v, "DENY-REMOTE-EXEC", "DENY", "会在本机执行一段你还没看过的脚本，无法预先判断后果。")
@@ -391,9 +420,17 @@ def _summary_for(head: str, tokens: list[str], flags: set[str], paths: list[str]
                     [Effect("read", target, "逐行扫描并输出匹配的行")],
                     "无副作用", "（示例）只显示包含关键词的行，可加 -n 显示行号")
         if head == "find":
-            return (f"在 {target} 中按条件查找文件，只读取不改动（不含 -delete/-exec 时）。",
+            if "-delete" in tokens:
+                return (f"在 {target} 中按条件查找并**直接删除**匹配项，删除不可恢复。",
+                        [Effect("delete", target, "删除所有匹配到的文件或目录（不可恢复）")],
+                        "不可逆", "（示例）通常无输出；建议先去掉 -delete、加 -print 预览匹配结果")
+            if "-exec" in tokens:
+                return (f"在 {target} 中查找匹配项，并对每一项执行指定命令；影响取决于被执行的命令。",
+                        [Effect("modify", target, "对匹配项逐一执行 -exec 指定的操作")],
+                        "视具体命令而定", "（示例）建议先用 -print 预览匹配范围")
+            return (f"在 {target} 中按条件查找文件，只读取不改动。",
                     [Effect("read", target, "递归遍历目录并输出符合条件的路径")],
-                    "无副作用", "（示例）/path/to/file1\n/path/to/file2")
+                    "无副作用", "（示例）列出匹配到的文件路径")
         if head in {"ps", "top", "htop"}:
             return "查看当前运行的进程列表，只读取信息。", [Effect("read", "进程表", "读取进程状态并显示")], "无副作用", "（示例）PID  USER  %CPU  COMMAND ..."
         if head in {"df", "du"}:
@@ -588,9 +625,40 @@ async def generate_command(query: str, mode: str = "nl2cmd", model: str | None =
         return {"ok": False, "error": f"模型输出不符合命令协议（{exc}），请换个说法重试",
                 "stage": "parse", "raw_excerpt": content[:300]}
 
-    verdict = gate_check(parsed.command)
-    effective_command = parsed.command if verdict.level != "DENY" else ""
-    simulation = simulate_command(parsed.command, verdict)
+    # 逐条门控 + 逐条模拟：一条 DENY 不影响其它只读命令的展示
+    command_items: list[dict[str, Any]] = []
+    all_verdicts: list[Verdict] = []
+    for line in parsed.commands:
+        v = gate_check(line)
+        all_verdicts.append(v)
+        command_items.append({
+            "text": line if v.level != "DENY" else "",
+            "original": line,
+            "risk": v.level,
+            "blocked": v.level == "DENY",
+            "reason": v.reason,
+            "consequences": v.consequences,
+            "alternatives": v.alternatives,
+            "simulation": simulate_command(line, v),
+        })
+
+    # 整体风险取最高等级；整体命令文本只保留未被拦截的行（兼容旧前端）
+    effective_lines = [it["text"] for it in command_items if it["text"]]
+    effective_command = "\n".join(effective_lines)
+    overall = max(all_verdicts, key=lambda v: LEVEL_ORDER[v.level])
+    merged_alts: list[str] = []
+    for v in all_verdicts:
+        for alt in v.alternatives:
+            if alt not in merged_alts:
+                merged_alts.append(alt)
+
+    # 整体模拟：把保留下来的命令合并推演，给前端一个总览卡片
+    simulation = simulate_command(effective_command, overall) if effective_command else {
+        "command": "", "status": "blocked", "head": "",
+        "summary": "所有命令均命中安全规则，已全部拦截，无可模拟内容。",
+        "effects": [], "writes_data": False, "network_access": False,
+        "reversible": "不适用（已拦截）", "sample_output": "无", "warnings": [],
+    }
 
     return {
         "ok": True,
@@ -598,13 +666,14 @@ async def generate_command(query: str, mode: str = "nl2cmd", model: str | None =
         "mode": mode,
         "explain": parsed.explain,
         "command": effective_command,
-        "risk": verdict.level,
+        "commands": command_items,
+        "risk": overall.level,
         "model_risk": parsed.model_risk,
-        "reason": verdict.reason,
-        "consequences": verdict.consequences,
+        "reason": overall.reason,
+        "consequences": overall.consequences,
         "params": parsed.params,
-        "alternatives": verdict.alternatives,
-        "unverified": verdict.unverified,
+        "alternatives": merged_alts,
+        "unverified": any(v.unverified for v in all_verdicts),
         "simulation": simulation,
         "model": actual_model,
         "demo": demo,
