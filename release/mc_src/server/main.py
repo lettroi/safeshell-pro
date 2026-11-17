@@ -16,10 +16,10 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse, PlainTextResponse, StreamingResponse
+from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
-from . import cache, connect, db, knowledge, router_engine as engine, cost, rate_limit
+from . import assistant, cache, connect, db, knowledge, router_engine as engine, cost, rate_limit
 from .raw import (RawCompletionRequest, raw_completion, warmup_models, audit_fields,
                   ModelDisabledError, ModelCoolingDownError)
 from .agent import run_chat
@@ -603,6 +603,41 @@ async def set_model_status(payload: ModelStatusPatch) -> ModelCatalogOut:
     return ModelCatalogOut(model=entry["model"], provider_id=entry["provider_id"], name=entry["name"],
                            region=entry.get("region", ""), configured=bool(entry["configured"]),
                            **common)
+
+
+# ---------------------------------------------------------------------------
+# 命令小助手（面向小白的独立界面 + 生成端点）
+# 只生成 · 不执行 · 不隔离：命令由免费大模型生成，安全由本地确定性门控覆盖，
+# 「执行后果」为纯静态文本推演，全程不调用任何执行原语。见 server/assistant.py。
+# ---------------------------------------------------------------------------
+@app.get("/assistant", response_class=HTMLResponse, include_in_schema=False,
+         summary="命令小助手界面")
+async def assistant_page() -> HTMLResponse:
+    page = ROOT / "server" / "assistant_page.html"
+    if not page.is_file():
+        return HTMLResponse("<h1>命令小助手页面缺失</h1>", status_code=500)
+    return HTMLResponse(page.read_text(encoding="utf-8"))
+
+
+@app.post("/api/v1/assistant/generate", summary="自然语言 → 安全命令 → 执行后果模拟",
+          description=("把大白话转成一条 Linux 命令：复用已接入的免费模型生成，服务端严格解析行协议，"
+                       "再用确定性规则引擎覆盖模型自评风险（DENY 直接清空命令），最后给出纯文本的"
+                       "「执行后果模拟」。全程只生成、不执行、不隔离。"))
+async def assistant_generate(payload: dict) -> dict:
+    query = str(payload.get("query") or "")
+    mode = str(payload.get("mode") or "nl2cmd")
+    if mode not in {"nl2cmd", "cmd2nl"}:
+        mode = "nl2cmd"
+    model = payload.get("model")
+    return await assistant.generate_command(query, mode=mode,
+                                            model=str(model) if model else None)
+
+
+@app.post("/api/v1/assistant/simulate", summary="单独模拟一条命令的执行后果（不执行）",
+          description="输入一条命令文本，纯静态推演它执行后会引发什么结果；绝不真正执行该命令。")
+async def assistant_simulate(payload: dict) -> dict:
+    command = str(payload.get("command") or "")
+    return assistant.simulate_command(command)
 
 
 # 可选：托管已构建的 React 前端（必须放在所有 API 路由之后）。

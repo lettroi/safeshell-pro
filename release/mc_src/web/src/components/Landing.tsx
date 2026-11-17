@@ -33,13 +33,15 @@ export default function Landing({ onEnter }: Props) {
         <h1>把自然语言变成<em>安全</em>的运维命令<br />完全<em>免费</em>，源码开放</h1>
         <p className="lede">本地优先 + 安全门控，叠加免费大模型额度路由。危险命令硬拦截、推理成本为 0、全程可审计。不收费、不设付费档、不需要注册 —— 自己申请各厂商免费 API Key，数据留在自己机器。</p>
         <div className="cta-row">
-          <button className="btn primary lg" onClick={() => onEnter('team')}>进入团队控制台</button>
+          <button className="btn primary lg" onClick={() => { window.location.href = '/assistant'; }}>🚀 打开命令小助手</button>
+          <button className="btn ghost lg" onClick={() => onEnter('team')}>进入团队控制台</button>
           <button className="btn ghost lg" onClick={() => onEnter('guide')}>查看接入向导</button>
         </div>
       </section>
 
       <section className="values">
         <div className="vc"><div className="vi">🛡️</div><b>安全门控</b><span>参数级规则引擎，高危命令（rm -rf / 格式化 / 提权）本地硬拦截，命令缓冲→校验→整行呈现。</span></div>
+        <div className="vc"><div className="vi">🔮</div><b>执行后果模拟</b><span>命令小助手会先告诉你这条命令执行后会改哪些文件、能否撤销、会不会联网——纯文字推演，绝不真的执行。对小白友好。</span></div>
         <div className="vc"><div className="vi">💸</div><b>真的免费</b><span>软件本身 0 元、无付费档；默认走 5 个已验证免费大模型，实付恒为 0。报告里的「预计节省」只是相对付费等价模型的对照估算，不是账单、也不是收费依据。</span></div>
         <div className="vc"><div className="vi">🔍</div><b>全程可审计</b><span>每次调用的来源、模型、延迟落库，哈希链防篡改，可一键校验与导出。</span></div>
         <div className="vc"><div className="vi">🏠</div><b>本地优先</b><span>本机有大模型就本地跑（隐私不出机器）；无则自动回退云端，数据离开本机有提示。</span></div>

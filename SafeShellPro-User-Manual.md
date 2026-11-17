@@ -138,6 +138,19 @@ cp .env.example .env
 
 ## 3. 日常使用
 
+### 3.0 命令小助手界面（面向小白，推荐入口）
+
+浏览器打开 **`http://127.0.0.1:8772/assistant`**（也可从产品首页点「🚀 打开命令小助手」）。这是给不懂命令行的人设计的对话式界面，与运维控制台解耦：
+
+- **自然语言 → 命令**：用大白话描述需求（如「查看占用空间最大的 5 个文件」），复用已接入的免费模型生成一条命令（实测走 `glm-4-flash`），并显示白话解释与参数拆解。
+- **执行后果模拟**（本次新增）：在命令下方以卡片形式告诉你——这条命令会**新建/修改/删除**哪些路径、是否**联网**、**能否撤销**、预期输出示例，以及更安全的替代做法。**纯文字静态推演，绝不真的执行、也不读写目标路径。**
+- **风险色标**：安全（绿，只读）/ 注意（黄，会改动）/ 危险（红，已拦截）。安全判断由服务端确定性门控覆盖模型自评：模型说 SAFE 但命令含命令替换、删系统目录、`curl|sh` 等，一律被提升或拦截，DENY 时命令文本不输出。
+- 一键复制命令到剪贴板；`Ctrl/Cmd+Enter` 快速提交。
+
+> 红线不变：**只生成 · 不执行 · 不隔离**。模拟只是"如果执行会发生什么"的文字说明，实际是否执行、在哪执行完全由你决定。
+
+对应 API：`POST /api/v1/assistant/generate`（完整编排）、`POST /api/v1/assistant/simulate`（只模拟一条命令文本），详见 §6。实现见 `server/assistant.py`（行协议解析、门控移植、静态模拟引擎，零执行原语）。
+
 ### 3.1 Web 控制台（6 个视图）
 
 | 视图 | 用途 |
@@ -270,7 +283,7 @@ bash install.sh stop
 | 变量 | 默认 | 说明 |
 |---|---|---|
 | `APP_PORT` | `8772` | 服务端口 |
-| `SFP_NETWORK_MODE` | `bridge` | 统一用 bridge；WSL 原生 dockerd 若 NAT 缺失，跑 `bash install.sh fix-network`，不要改 host |
+| `SFP_NETWORK_MODE` | `host` | **WSL2 本机部署统一用 host**（经实测的最终决策）：Windows 经 wslhost 的 localhost 转发访问 127.0.0.1:8772 稳定，直连 WSL IP / docker-proxy 端口映射在实测中不稳定。host 下 `ports` 映射被忽略属预期；标准 Docker / Docker Desktop 可改回 bridge |
 | `RAW_RPM_PER_CLIENT` | `30` | 按客户端限流（0=不限），对齐 GLM 免费档 |
 | `RAW_UPSTREAM_TIMEOUT_S` | `60` | 上游全局超时，覆盖 GLM-4-9B-0414 冷启动 |
 | `RAW_MODEL_TIMEOUTS` | 见 `.env.example` | 按模型分级超时的 JSON（快模型 12s、慢模型 45–50s）；未命中用全局值 |
@@ -288,8 +301,8 @@ bash install.sh stop
 | 双击 `install.bat` 提示 WSL 未就绪 | WSL 未启动 / 首次唤醒 | 先手动运行一次 `wsl`，再双击 |
 | 提示 `docker daemon unreachable` | WSL 隔夜休眠，dockerd 未自启（`/etc/profile.d` 只在 login shell 触发自启） | 在 WSL 里执行 `service docker start`；一键脚本已用 `bash -lc` + 重试 + 自动拉起处理 |
 | **Windows 侧间歇 502 / 连接被重置，容器日志反复出现 "Started server process"** | WSL2 **没有常驻会话时实例反复休眠/重建**，容器随之重启（与网络模式无关） | **双击 `keep-wsl.bat` 保持一个常驻 WSL 终端窗口（最小化即可）**，见 §1.2；脚本每 30s 自愈 dockerd/容器/health。或改用 Docker Desktop（bridge 正常） |
-| 容器内 `pip install` / `npm ci` 解析不了域名；bridge 容器访问不了厂商 API | dockerd 以 `--iptables=false` 启动，缺 MASQUERADE（出站）与 DNAT（端口映射） | **已修复**：去掉禁用参数、切 iptables-legacy、重启 dockerd。新环境执行 `bash install.sh fix-network` 兜底；**不要**再退回 host 模式 |
-| 提示 `Published ports are discarded` | 仅 `SFP_NETWORK_MODE=host` 时 compose 忽略 `ports` | 当前默认 bridge，不应出现；若出现说明误配，改回 bridge 并跑 `fix-network` |
+| 容器内 `pip install` / `npm ci` 解析不了域名；**bridge** 容器访问不了厂商 API | dockerd 以 `--iptables=false` 启动，缺 MASQUERADE（出站）与 DNAT（端口映射） | **已修复**：去掉禁用参数、切 iptables-legacy、重启 dockerd。若未来切回 bridge 模式，新环境执行 `bash install.sh fix-network` 兜底。WSL2 本机部署当前用 host，不经 docker bridge 出站，故此问题不触发 |
+| 提示 `Published ports are discarded` | 仅 `SFP_NETWORK_MODE=host` 时 compose 忽略 `ports` | **预期行为**：当前默认就是 host（见上面 §4.4），`ports` 映射被忽略属正常，无需处理；若想用 bridge 端口映射再切回 bridge 并跑 `fix-network` |
 | 端口 8772 被占用 | 其他服务 | `install.sh doctor` 检查；或换 `APP_PORT`（并同步 §4.3） |
 | 模型返回 `403 / MODEL_DISABLED` | 管理员停用了该模型 | 控制台「免费模型清单」点「启用」，或改用其他模型 |
 | `429 / MODEL_COOLDOWN` | 该模型刚超时/过载，自动熔断中 | 无需处理，客户端会自动切下一个；5 分钟后自动恢复 |
@@ -309,6 +322,9 @@ bash install.sh stop
 | 方法 | 端点 | 说明 |
 |---|---|---|
 | GET | `/api/v1/health` | 健康检查（容器 healthcheck 使用） |
+| GET | `/assistant` | **命令小助手界面**（面向小白的独立单页；见 §3.0） |
+| POST | `/api/v1/assistant/generate` | 自然语言 → 命令 → 执行后果模拟（body `{"query":...,"mode":"nl2cmd"}`）；门控覆盖模型自评，纯静态模拟不执行 |
+| POST | `/api/v1/assistant/simulate` | 只模拟一条命令文本的后果（body `{"command":...}`），零执行原语 |
 | POST | `/api/v1/raw/completions` | **纯模型透传**：OpenAI 兼容 `messages`，按 `model` 路由，带限流与审计；供 ShellMate 使用 |
 | GET | `/api/v1/models` | 模型清单（接入/启用状态、停用原因、熔断剩余秒数、近 1h 延迟与成功率） |
 | PUT | `/api/v1/models/status` | 启用 / 停用模型，body `{"model":...,"enabled":false,"reason":...}` |

@@ -1,0 +1,612 @@
+"""命令助手：自然语言 → 安全命令 → 执行后果模拟。
+
+设计红线（与 ShellMate 一脉相承）：
+- **只生成 · 不执行 · 不隔离**：本模块从头到尾只做「文本 → 文本」。模拟引擎是
+  纯静态规则推演，绝不调用 subprocess / os.system / eval / exec，也不读写被推演的
+  目标路径。它告诉你「如果执行会发生什么」，但永远不会真的执行。
+- 安全判断由确定性门控（gate.check）覆盖模型自评；DENY 时命令被清空，任何返回
+  路径都不会把它交给用户。
+- 命令生成复用 raw.raw_completion()：凭据路由、熔断、停用、审计口径全部继承，
+  不另起一套上游调用。
+
+对外入口：
+    generate_command(query, mode="nl2cmd") -> dict   # 完整编排
+    simulate_command(command, verdict=None) -> dict  # 单独模拟一条命令文本
+"""
+from __future__ import annotations
+
+import re
+import shlex
+from dataclasses import dataclass, field
+from typing import Any
+
+from . import raw
+
+
+# ---------------------------------------------------------------------------
+# 1) 提示词（移植 ShellMate prompt.py 的铁律：non-thinking + 行协议 + 不执行）
+# ---------------------------------------------------------------------------
+
+LINE_PROTOCOL = """EXPLAIN: <一句中文白话解释，不超过两行，不要换行>
+---
+COMMAND: <只写一行命令，不要代码块、不要反引号、不要前后缀说明>
+RISK: <SAFE 或 CAUTION 或 DENY，你的初步判断>
+REASON: <一句话说明为什么是这个风险等级>
+PARAMS: <片段>=<含义>; <片段>=<含义>"""
+
+_ENV_BLOCK = (
+    "目标环境：Linux（常见发行版），交互式 bash，普通用户权限。"
+    "命令会在一台开发机上由用户手动复制执行；用户是不懂命令行的初学者。"
+)
+
+
+def build_system_prompt() -> str:
+    return (
+        "你是一个耐心的 Linux 命令行老师，面向完全不懂命令行的初学者。\n"
+        f"{_ENV_BLOCK}\n"
+        "硬性要求：\n"
+        "- 只输出一行可直接复制的命令，不要 Markdown 代码块、不要反引号、不要客套话。\n"
+        "- 用中文写白话解释，让没用过终端的人也能听懂；顺带说清这条命令会不会改动文件。\n"
+        "- 只使用真实存在的命令和参数，绝不编造选项。不确定时给最保守的只读命令。\n"
+        "- 不做任何执行动作；你只负责写出命令文本。\n"
+        "- 不输出思考过程、不输出分析步骤、不输出「让我想想」。\n"
+        "- 用户问危险操作时，不要说教，给一个更安全的只读命令作为替代。\n"
+        "\n严格按下面的格式输出，每行一个字段，不要加任何其他内容：\n" + LINE_PROTOCOL
+    )
+
+
+def build_user_prompt(query: str, mode: str = "nl2cmd") -> str:
+    if mode == "cmd2nl":
+        return (
+            "任务：解释下面这条已有命令。COMMAND 原样抄回这条命令，"
+            "EXPLAIN 用中文说明它整体做什么、会不会改动系统，PARAMS 逐段拆解。\n"
+            f"命令：{query}"
+        )
+    return (
+        "任务：把下面的自然语言需求转成一条命令。若需求涉及不可逆操作，"
+        "仍要给一条更安全的只读命令作为替代，不要给破坏性命令。\n"
+        f"需求：{query}"
+    )
+
+
+# ---------------------------------------------------------------------------
+# 2) 行协议严格解析（移植 ShellMate client.parse_line_protocol）
+# ---------------------------------------------------------------------------
+
+class ParseError(Exception):
+    """模型输出不符合行协议契约。"""
+
+
+@dataclass
+class ParsedCommand:
+    command: str
+    risk_level: str
+    reason: str
+    explain: str
+    params: list[dict[str, str]] = field(default_factory=list)
+    model_risk: str = ""
+
+
+def parse_line_protocol(text: str) -> ParsedCommand:
+    """严格解析；任何必需字段缺失/非法都抛 ParseError，绝不猜测补齐。"""
+    raw_text = (text or "").strip()
+    fields: dict[str, str] = {}
+    current: str | None = None
+    for line in raw_text.splitlines():
+        stripped = line.strip()
+        if stripped == "---":
+            current = None
+            continue
+        if not stripped:
+            continue
+        known = False
+        for key in ("EXPLAIN", "COMMAND", "RISK", "REASON", "PARAMS"):
+            prefix = key + ":"
+            if stripped.startswith(prefix):
+                fields[key] = stripped[len(prefix):].strip()
+                current = key
+                known = True
+                break
+        # 续行：即使该字段首行为空（如模型把 PARAMS 的值写在下一行），也要收集
+        if not known and current is not None:
+            fields[current] = (fields.get(current, "") + " " + stripped).strip()
+
+    # 核心四字段严格必填；PARAMS 只是辅助展示，缺失不应阻断命令生成
+    for required in ("EXPLAIN", "COMMAND", "RISK", "REASON"):
+        if not fields.get(required):
+            raise ParseError(f"缺少 {required} 字段")
+
+    command_field = fields["COMMAND"].strip()
+    if "```" in command_field:
+        raise ParseError("命令里混入了 Markdown 代码块")
+    command = command_field.strip("`").strip()
+    if not command or "\n" in command:
+        raise ParseError("命令行不是单行文本")
+
+    risk = fields["RISK"].strip().upper()
+    if risk not in {"SAFE", "CAUTION", "DENY"}:
+        raise ParseError(f"RISK 值非法：{risk}")
+
+    params: list[dict[str, str]] = []
+    params_field = fields.get("PARAMS", "").strip()
+    # 模型习惯两种写法：分号分隔 `find=查找; -size=按大小`，或空白分隔 `a=xx b=yy`。
+    # 统一按「空白或分号 + 形如 token= 的分界」切分，兼容两者。
+    chunks = re.split(r"[;\n]\s*|(?<=\S)\s+(?=[A-Za-z0-9_\-./]{1,24}=)", params_field) if params_field else []
+    for chunk in chunks:
+        chunk = chunk.strip().strip(";").strip()
+        if not chunk or "=" not in chunk:
+            continue
+        token, meaning = chunk.split("=", 1)
+        token, meaning = token.strip(), meaning.strip()
+        if token and meaning:
+            params.append({"token": token, "meaning": meaning})
+
+    return ParsedCommand(
+        command=command,
+        risk_level=risk,
+        model_risk=risk,
+        reason=fields["REASON"],
+        explain=fields["EXPLAIN"],
+        params=params,
+    )
+
+
+# ---------------------------------------------------------------------------
+# 3) 确定性门控（移植 ShellMate gate.py 的核心；去掉对客户端 CommandResult 的依赖）
+#    纯函数，无 IO、无执行。模型自评 risk 只留痕，最终结论以这里为准。
+# ---------------------------------------------------------------------------
+
+@dataclass
+class Verdict:
+    level: str = "SAFE"
+    matched_rules: list[str] = field(default_factory=list)
+    unverified: bool = False
+    reason: str = ""
+    consequences: str = ""
+    alternatives: list[str] = field(default_factory=list)
+
+
+LEVEL_ORDER = {"SAFE": 0, "CAUTION": 1, "DENY": 2}
+KNOWN_COMMANDS = frozenset(
+    """ls pwd cd find grep egrep fgrep rg cat head tail wc sort uniq cut awk sed
+    ps top htop df du free uptime who whoami id date echo printf file stat which
+    whereis type man help history env printenv uname hostname ss netstat ip ping
+    curl wget tar gzip gunzip zip unzip unxz xz bzip2 diff cmp tee tree less more
+    basename dirname realpath readlink sha256sum md5sum jq column tr paste comm
+    join nl rev tac seq watch lsof mount blkid lsblk fdisk dmesg journalctl git
+    docker kubectl systemctl service kill pkill pgrep nice nohup sleep time test
+    mkdir touch cp mv rm rmdir ln chmod chown chgrp dd mkfs mkfs.ext4 shred truncate sync
+    crontab alias export unset source bash sh zsh fish sudo su python python3 pip
+    node npm make cmake gcc apt apt-get yum dnf pacman snap flatpak
+    xargs getconf nproc lscpu lsmod modprobe loginctl timedatectl
+    hostnamectl localectl resolvectl openssl ssh scp rsync true false""".split()
+)
+SYSTEM_PATHS = frozenset(
+    """/ /var /etc /usr /bin /sbin /boot /dev /sys /proc /lib /lib64 /opt /root
+    /home /srv /run /mnt /media""".split()
+)
+PERMISSIVE_MODES = {"777", "666", "000", "a+rwx", "o+rwx", "0777", "a=rwx"}
+_SPLIT_RE = re.compile(r"(?:\|\||&&|;|\||\n)")
+_SUBSHELL_RE = re.compile(r"\$\(|`|>\s*/dev/(?:sd|nvme|hd|mmcblk)|:\(\)\s*\{")
+_BLOCK_DEVICE_RE = re.compile(r"^/dev/(?:sd|nvme|hd|mmcblk|loop|vd)")
+_ENV_ASSIGN_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
+
+_CONS_DELETE = "删除不可恢复，终端里没有回收站；路径写错或变量为空时，影响范围可能远超预期。"
+_CONS_777 = "这会让本机任何账号都能改写这些文件；若目录位于共享目录或 Web 根目录下，风险更高。"
+_ALT_DELETE = ("du -sh <目录>/* | sort -h 先看体积", "mv 到临时目录观察几天再处理", "删除前先做一份备份")
+
+
+def _is_system_path(token: str) -> bool:
+    t = token.strip().strip("'\"").rstrip("*").rstrip("/") or "/"
+    if t in SYSTEM_PATHS or t in {"~", "$HOME", "${HOME}"}:
+        return True
+    return any(t.startswith(p + "/") for p in SYSTEM_PATHS if p != "/")
+
+
+def _paths(tokens: list[str]) -> list[str]:
+    out: list[str] = []
+    for i, tok in enumerate(tokens[1:], start=1):
+        if tok.startswith("-") and i > 0 and tokens[i - 1] not in {"-size", "-name"}:
+            continue
+        if i > 0 and tokens[i - 1] in {"-C", "-f", "-o", "-t", "-d", "-path", "-type"}:
+            continue
+        if "/" in tok or tok in {".", "..", "~"} or tok.startswith("$") or tok.startswith("*"):
+            out.append(tok)
+    return out
+
+
+def _flags(tokens: list[str]) -> set[str]:
+    flags: set[str] = set()
+    for tok in tokens[1:]:
+        if tok.startswith("--"):
+            flags.add(tok.split("=", 1)[0])
+        elif tok.startswith("-") and len(tok) > 1 and not tok[1].isdigit():
+            flags.update("-" + ch for ch in tok[1:])
+    return flags
+
+
+def _strip_prefixes(tokens: list[str]) -> tuple[list[str], bool]:
+    rest = list(tokens)
+    while rest and _ENV_ASSIGN_RE.match(rest[0]):
+        rest.pop(0)
+    if rest and rest[0] == "env":
+        rest.pop(0)
+    privileged = bool(rest and rest[0] in {"sudo", "su"})
+    if privileged:
+        rest = rest[1:]
+    return rest, privileged
+
+
+def _record(v: Verdict, rule_id: str, level: str, consequences: str = "",
+            alternatives: tuple[str, ...] = ()) -> None:
+    if rule_id not in v.matched_rules:
+        v.matched_rules.append(rule_id)
+    if LEVEL_ORDER[level] > LEVEL_ORDER[v.level]:
+        v.level = level
+    if consequences and not v.consequences:
+        v.consequences = consequences
+    for alt in alternatives:
+        if alt not in v.alternatives:
+            v.alternatives.append(alt)
+
+
+def _check_segments(command: str, v: Verdict) -> None:
+    for segment in (p.strip() for p in _SPLIT_RE.split(command)):
+        if not segment:
+            continue
+        try:
+            tokens = shlex.split(segment, posix=True)
+        except ValueError:
+            _record(v, "CAUTION-UNPARSEABLE", "CAUTION", "引号没有闭合，命令结构无法可靠解析。")
+            v.unverified = True
+            continue
+        tokens, privileged = _strip_prefixes(tokens)
+        if privileged:
+            _record(v, "CAUTION-SUDO", "CAUTION", "提权后误操作的影响范围会放大到整个系统。",
+                    ("先不加 sudo 试一次，确认确实需要再提权",))
+        if not tokens:
+            continue
+        head = tokens[0]
+        if head not in KNOWN_COMMANDS:
+            v.unverified = True
+
+        flags = _flags(tokens)
+        paths = _paths(tokens)
+        # DENY 规则
+        if head in {"rm", "rmdir", "shred"} and (
+            flags & {"-r", "-R", "--recursive", "-f", "--force"} or head == "shred"
+        ) and any(_is_system_path(p) or p.startswith("$") for p in paths):
+            _record(v, "DENY-DELETE-SYSTEM", "DENY",
+                    "/var 等系统目录存放日志、缓存与包管理数据库，整目录删除后通常无法恢复，机器可能无法启动。",
+                    tuple(_ALT_DELETE))
+        if head in {"dd", "mkfs", "mkfs.ext4", "mkfs.xfs", "shred"}:
+            danger = any(tok.startswith("of=") and _BLOCK_DEVICE_RE.match(tok[3:]) for tok in tokens) if head == "dd" \
+                else any(_BLOCK_DEVICE_RE.match(p) for p in paths)
+            if danger:
+                _record(v, "DENY-BLOCK-DEVICE", "DENY", "会覆盖磁盘或分区上的原始数据，几乎不可能恢复。",
+                        ("先确认设备名：lsblk", "操作前做完整镜像备份"))
+        if re.search(r"(?:curl|wget)[^|]*\|\s*(?:sudo\s+)?(?:ba)?sh\b", segment, re.I):
+            _record(v, "DENY-REMOTE-EXEC", "DENY",
+                    "会在本机执行一段你还没看过的脚本，内容随时可变，无法预先判断后果。",
+                    ("curl -o script.sh <URL> 下载后先读一遍再决定",))
+        if re.search(r":\(\)\s*\{.*\|\s*:\s*&", segment):
+            _record(v, "DENY-FORK-BOMB", "DENY", "会瞬间耗尽进程配额导致机器卡死，通常需要强制重启。")
+        if re.search(r">\s*(?:/etc|/usr|/boot|/var)/", segment):
+            _record(v, "DENY-OVERWRITE-SYSTEM", "DENY", "会直接覆盖系统配置或服务文件，可能导致无法启动。",
+                    ("先备份原文件：cp -a <文件> <文件>.bak",))
+        # CAUTION 规则
+        if head in {"chmod", "chown"} and (flags & {"-r", "-R", "--recursive"}) and \
+                any(t.strip("'\"") in PERMISSIVE_MODES for t in tokens[1:]):
+            _record(v, "CAUTION-777", "CAUTION", _CONS_777, ("chmod -R 755 ./project",))
+        if head in {"rm", "rmdir", "unlink", "shred"}:
+            _record(v, "CAUTION-DELETE", "CAUTION", _CONS_DELETE,
+                    ("mv 到临时目录观察几天再处理", "删除前先做备份"))
+        if head == "git" and ({"--hard", "-f", "--force"} & flags or
+                              (len(tokens) > 2 and tokens[1] in {"reset", "clean", "push"})):
+            _record(v, "CAUTION-GIT-DESTRUCTIVE", "CAUTION", "可能丢弃未提交的工作区改动，且不易恢复。",
+                    ("先运行 git status 看清改动", "用 git stash 暂存而不是 --hard"))
+        if head == "find" and ("-delete" in tokens or "-exec" in tokens):
+            _record(v, "CAUTION-FIND-DELETE", "CAUTION", "匹配范围稍写错就会批量删除，且不可恢复。",
+                    ("先去掉 -delete，只加 -print 看一遍匹配结果",))
+        if head in {"systemctl", "service", "kill", "pkill"} and \
+                any(t in {"stop", "disable", "restart", "-9", "--force"} for t in tokens[1:]):
+            _record(v, "CAUTION-SERVICE", "CAUTION", "可能中断正在运行的服务或丢失未保存数据。",
+                    ("先用 ps / systemctl status 确认目标",))
+        if re.search(r"(?<![\d=\-])>\s*[^\s]", segment) and not segment.strip().startswith("#"):
+            _record(v, "CAUTION-REDIRECT", "CAUTION", "会覆盖目标文件的原有内容。",
+                    ("把 > 换成 >> 追加，或先备份目标文件",))
+
+
+def gate_check(command: str) -> Verdict:
+    """确定性门控：纯函数，无 IO、无执行。"""
+    v = Verdict()
+    if not command.strip():
+        _record(v, "CAUTION-EMPTY", "CAUTION", "没有拿到可检查的命令文本。")
+        v.reason = "空命令"
+        return v
+    if _SUBSHELL_RE.search(command):
+        _record(v, "CAUTION-SUBSHELL", "CAUTION", "含命令替换或重定向到设备，执行范围不易一眼看清。")
+    # 跨管道/分号的模式先用整条原文判定
+    if re.search(r"(?:curl|wget)[^|]*\|\s*(?:sudo\s+)?(?:ba)?sh\b", command, re.I):
+        _record(v, "DENY-REMOTE-EXEC", "DENY", "会在本机执行一段你还没看过的脚本，无法预先判断后果。")
+    if re.search(r":\(\)\s*\{.*\|\s*:\s*&", command):
+        _record(v, "DENY-FORK-BOMB", "DENY", "会瞬间耗尽进程配额导致机器卡死。")
+    if re.search(r">\s*(?:/etc|/usr|/boot|/var)/", command):
+        _record(v, "DENY-OVERWRITE-SYSTEM", "DENY", "会直接覆盖系统配置或服务文件。")
+    _check_segments(command, v)
+    if v.level == "SAFE":
+        v.reason = "未命中写入/删除/提权类规则，按只读命令处理"
+    elif v.level == "CAUTION":
+        v.reason = "命令可用，但改动范围或权限开放程度需要你先确认"
+    else:
+        v.reason = "命中不可逆规则，已拒绝输出命令"
+    return v
+
+
+# ---------------------------------------------------------------------------
+# 4) 执行后果模拟引擎（纯静态推演，零执行原语）
+#    仅解析命令文本，按命令族推导「如果执行会发生什么」；不碰真实文件系统。
+# ---------------------------------------------------------------------------
+
+@dataclass
+class Effect:
+    kind: str      # read | create | modify | delete | network | permission | process | package | archive | unknown
+    target: str
+    detail: str
+
+
+# 命令族 → 只读判定（这些族默认不改变系统状态）
+_READ_ONLY = set("""ls pwd cat head tail grep egrep fgrep rg wc sort uniq cut awk sed
+ps top htop free uptime who whoami id date stat which whereis type env printenv
+uname hostname ss netstat ip ping lsof mount lsblk blkid dmesg journalctl
+tree less more file sha256sum md5sum diff cmp jq nl rev tac seq nproc lscpu
+getconf printenv hostnamectl timedatectl du df find column tr paste comm join
+basename dirname realpath readlink echo printf history man help sleep time test
+true false""".split())
+_CREATE = {"mkdir", "touch"}
+_COPY = {"cp", "mv", "ln"}
+_DELETE = {"rm", "rmdir", "unlink", "shred", "truncate"}
+_PERMISSION = {"chmod", "chown", "chgrp"}
+_NETWORK = {"curl", "wget", "ssh", "scp", "rsync"}
+_PACKAGE = {"apt", "apt-get", "yum", "dnf", "pacman", "pip", "pip3", "npm", "snap", "flatpak"}
+_PROCESS = {"systemctl", "service", "kill", "pkill", "pgrep", "killall"}
+_ARCHIVE = {"tar", "zip", "unzip", "gzip", "gunzip", "xz", "unxz", "bzip2"}
+_DISK = {"dd", "mkfs", "mkfs.ext4", "mkfs.xfs", "fdisk"}
+
+
+def _summary_for(head: str, tokens: list[str], flags: set[str], paths: list[str]) -> tuple[str, list[Effect], str, str]:
+    """返回 (一句话摘要, 影响列表, 可逆性, 预期输出示例)。全部为文本推演。"""
+    if head in _READ_ONLY:
+        target = paths[0] if paths else "当前位置"
+        if head in {"ls", "tree"}:
+            return (f"列出 {target} 的文件清单，只读取信息，不会改动任何文件。",
+                    [Effect("read", target, "读取目录条目并显示名称、大小、时间等元信息")],
+                    "无副作用", "（示例）total 24\ndrwxr-xr-x 2 user user 4096 ...  project/\n-rw-r--r-- 1 user user  812 ...  notes.txt")
+        if head in {"cat", "head", "tail", "less", "more"}:
+            return (f"读取并显示 {target} 的内容，文件本身不会改变。",
+                    [Effect("read", target, "读取文件内容并输出到屏幕")],
+                    "无副作用", "（示例）文件内容会原样显示在终端，可用 head/tail 限制行数")
+        if head in {"grep", "egrep", "fgrep", "rg"}:
+            return (f"在 {target} 中搜索匹配的内容，只读取不改动。",
+                    [Effect("read", target, "逐行扫描并输出匹配的行")],
+                    "无副作用", "（示例）只显示包含关键词的行，可加 -n 显示行号")
+        if head == "find":
+            return (f"在 {target} 中按条件查找文件，只读取不改动（不含 -delete/-exec 时）。",
+                    [Effect("read", target, "递归遍历目录并输出符合条件的路径")],
+                    "无副作用", "（示例）/path/to/file1\n/path/to/file2")
+        if head in {"ps", "top", "htop"}:
+            return "查看当前运行的进程列表，只读取信息。", [Effect("read", "进程表", "读取进程状态并显示")], "无副作用", "（示例）PID  USER  %CPU  COMMAND ..."
+        if head in {"df", "du"}:
+            return (f"查看 {target} 的磁盘/目录占用，只读取信息。",
+                    [Effect("read", target, "统计并输出空间占用")], "无副作用", "（示例）12G  /home/user")
+        return (f"执行只读命令 {head}，不会改动系统状态。",
+                [Effect("read", target, f"{head} 读取信息并输出")], "无副作用", "（示例）命令结果会显示在终端")
+
+    if head in _CREATE:
+        targets = paths or ["指定路径"]
+        names = "、".join(targets)
+        return (f"创建 {names}；如果同名项目已存在，mkdir 会报错、touch 会更新其时间戳。",
+                [Effect("create", t, "新建空目录" if head == "mkdir" else "新建空文件/更新时间戳") for t in targets],
+                "可逆（可用 rm/rmdir 删除，但删除本身不可逆）",
+                "（示例）成功时没有任何输出；用 ls 可以看到新项目")
+
+    if head in _COPY:
+        targets = paths or ["目标路径"]
+        return (f"把源内容复制/移动到 {targets[-1]}；若目标已存在同名文件，内容会被覆盖。",
+                [Effect("modify", t, "写入或移动数据到该路径") for t in targets],
+                "通常可逆（保留源文件时），覆盖目标则难恢复",
+                "（示例）成功时通常没有输出；用 ls -l 核对目标文件")
+
+    if head in _DELETE:
+        targets = paths or ["指定路径"]
+        names = "、".join(targets)
+        return (f"删除 {names}；删除后终端里没有回收站，无法直接撤销。",
+                [Effect("delete", t, "移除该路径及其数据（不可恢复）") for t in targets],
+                "不可逆", "（示例）成功时通常没有输出；用 ls 确认已消失")
+
+    if head in _PERMISSION:
+        targets = paths or ["指定路径"]
+        return (f"修改 {targets[0]} 的权限/所有者；设置过宽（如 777）会让任何账号都能改写。",
+                [Effect("permission", t, "更改权限位或属主") for t in targets],
+                "可逆（改回原权限即可，前提是记得原值）",
+                "（示例）成功时没有输出；用 ls -l 查看新的权限")
+
+    if head in _NETWORK:
+        host = next((t for t in tokens[1:] if t.startswith("http")), "指定地址")
+        return (f"向 {host} 发起网络请求；可能下载内容或把本机数据发送出去，取决于具体参数。",
+                [Effect("network", host, "建立外部网络连接并传输数据")],
+                "视操作而定", "（示例）显示响应内容或下载进度；网络不通会报超时")
+        # 下载后管道给 shell 的情况由门控 DENY，这里不重复展开
+
+    if head in _PACKAGE:
+        verb = next((t for t in tokens[1:] if not t.startswith("-")), "操作")
+        return (f"通过 {head} 执行「{verb}」包管理操作：安装/更新/卸载软件会改变系统环境与磁盘占用。",
+                [Effect("package", head, f"执行 {verb}，改动已安装软件包")],
+                "通常可逆（可重新安装），但配置变更不自动回滚",
+                "（示例）显示下载与安装进度；需要网络与相应权限")
+
+    if head in _PROCESS:
+        verb = next((t for t in tokens[1:] if t in {"start", "stop", "restart", "disable", "enable"}), "操作")
+        target = paths[0] if paths else (tokens[2] if len(tokens) > 2 else "指定服务/进程")
+        return (f"{head} 将对 {target} 执行「{verb}」：服务状态或进程会变化，正在运行的任务可能中断。",
+                [Effect("process", target, f"服务/进程状态变为 {verb}")],
+                "重启后可能恢复，未保存的数据不保留",
+                "（示例）systemctl 显示状态变化；kill 成功时无输出")
+
+    if head in _ARCHIVE:
+        target = paths[0] if paths else "指定归档"
+        return (f"用 {head} 打包/解压 {target}：可能生成新归档文件或解开覆盖已有文件。",
+                [Effect("archive", target, "读写归档文件")],
+                "视操作而定（解包可能覆盖同名文件）",
+                "（示例）加 -v 会列出处理的文件名")
+
+    if head in _DISK:
+        return (f"⚠️ {head} 是磁盘级危险操作：可能直接改写分区表或覆盖整块设备，数据几乎无法恢复。",
+                [Effect("modify", "磁盘/分区", "低级写入，可能破坏现有数据")],
+                "不可逆（灾难性）", "（示例）此操作通常无确认提示，务必先核对设备名")
+
+    if head == "git":
+        verb = tokens[1] if len(tokens) > 1 else "操作"
+        return (f"git {verb} 会改变仓库状态或历史；强制类参数可能丢弃未提交的改动。",
+                [Effect("modify", "Git 仓库", f"执行 {verb}，可能影响工作区或提交历史")],
+                "视操作而定（--hard/clean 丢弃的改动难恢复）",
+                "（示例）显示提交、差异或状态信息")
+
+    # 未知命令：诚实标注，不臆造后果
+    return (f"命令 {head} 不在模拟规则库覆盖范围内，无法可靠推演后果；请先在测试环境确认。",
+            [Effect("unknown", head, "未识别的命令，模拟引擎不做推测")],
+            "未知", "（示例）无可用示例")
+
+
+def simulate_command(command: str, verdict: Verdict | None = None) -> dict[str, Any]:
+    """对一条命令文本做**静态**后果模拟。纯文本推演，绝不执行、不读目标路径。
+
+    DENY 命令：命令本身会被门控清空，这里只返回「已拦截」说明，不推演细节，
+    避免给用户一种「这条危险命令还能安全试行」的错觉。
+    """
+    verdict = verdict or gate_check(command)
+    effects: list[Effect] = []
+    summaries: list[str] = []
+    reversibilities: list[str] = []
+    samples: list[str] = []
+    heads: list[str] = []
+
+    for segment in (p.strip() for p in _SPLIT_RE.split(command)):
+        if not segment:
+            continue
+        try:
+            tokens = shlex.split(segment, posix=True)
+        except ValueError:
+            tokens = segment.split()
+        tokens, _ = _strip_prefixes(tokens)
+        if not tokens:
+            continue
+        head, flags, paths = tokens[0], _flags(tokens), _paths(tokens)
+        heads.append(head)
+        summary, fx, rev, sample = _summary_for(head, tokens, flags, paths)
+        summaries.append(summary)
+        effects.extend(fx)
+        reversibilities.append(rev)
+        samples.append(sample)
+
+    writes = [e.kind in {"create", "modify", "delete", "permission", "package", "process", "archive"} for e in effects]
+    network = any(e.kind == "network" for e in effects)
+    if verdict.level == "DENY":
+        return {
+            "command": command,
+            "status": "blocked",
+            "head": heads[0] if heads else "",
+            "summary": "这条命令已被安全门拦截，不会生成、也不会模拟执行。",
+            "effects": [{"kind": "blocked", "target": "", "detail": "命中不可逆规则：" + (verdict.consequences or verdict.reason)}],
+            "writes_data": False,
+            "network_access": False,
+            "reversible": "不适用（已拦截）",
+            "sample_output": "无：命令未生成、未执行。",
+            "warnings": [verdict.consequences] if verdict.consequences else [],
+        }
+
+    rev = "不可逆" if "不可逆" in reversibilities or "灾难性" in "".join(reversibilities) else \
+          ("无副作用" if reversibilities and all(r == "无副作用" for r in reversibilities) else "部分可逆")
+    warnings: list[str] = []
+    if any(writes):
+        warnings.append("这条命令会改变系统状态；模拟只是文字推演，实际结果取决于文件是否存在、权限和环境。")
+    if network:
+        warnings.append("这条命令会访问外部网络，可能把数据发出本机。")
+    if verdict.level == "CAUTION" and verdict.consequences:
+        warnings.append(verdict.consequences)
+    warnings.extend(verdict.alternatives[:2])
+
+    return {
+        "command": command,
+        "status": "simulated",
+        "head": heads[0] if heads else "",
+        "summary": " ".join(summaries) if summaries else "空命令，无可模拟内容。",
+        "effects": [{"kind": e.kind, "target": e.target, "detail": e.detail} for e in effects],
+        "writes_data": any(writes),
+        "network_access": network,
+        "reversible": rev,
+        "sample_output": "\n".join(samples) if samples else "无",
+        "warnings": list(dict.fromkeys(warnings)),
+    }
+
+
+# ---------------------------------------------------------------------------
+# 5) 完整编排：NL → 真实模型 → 解析 → 门控 → 模拟
+# ---------------------------------------------------------------------------
+
+async def generate_command(query: str, mode: str = "nl2cmd", model: str | None = None) -> dict[str, Any]:
+    """端到端生成。任何失败都返回结构化 error，不抛出到框架层。"""
+    q = (query or "").strip()
+    if not q:
+        return {"ok": False, "error": "问题不能为空", "stage": "input"}
+    if len(q) > 1000:
+        return {"ok": False, "error": "问题太长（上限 1000 字）", "stage": "input"}
+
+    messages = [
+        {"role": "system", "content": build_system_prompt()},
+        {"role": "user", "content": build_user_prompt(q, mode)},
+    ]
+    try:
+        data = await raw.raw_completion(raw.RawCompletionRequest(
+            model=model, messages=messages, max_tokens=512, temperature=0.2))
+    except Exception as exc:  # noqa: BLE001 - 上游错误统一结构化
+        return {"ok": False, "error": f"模型调用失败：{exc}", "stage": "generate"}
+
+    demo = bool(data.get("demo"))
+    actual_model = str(data.get("model") or "unknown")
+    try:
+        content = data["choices"][0]["message"]["content"] or ""
+    except (KeyError, IndexError, TypeError):
+        return {"ok": False, "error": "模型返回内容为空", "stage": "generate"}
+    if not isinstance(content, str):
+        return {"ok": False, "error": "模型返回格式异常", "stage": "generate"}
+
+    try:
+        parsed = parse_line_protocol(content)
+    except ParseError as exc:
+        # 行协议不合规：绝不猜测补齐，明确告知重试
+        return {"ok": False, "error": f"模型输出不符合命令协议（{exc}），请换个说法重试",
+                "stage": "parse", "raw_excerpt": content[:300]}
+
+    verdict = gate_check(parsed.command)
+    effective_command = parsed.command if verdict.level != "DENY" else ""
+    simulation = simulate_command(parsed.command, verdict)
+
+    return {
+        "ok": True,
+        "query": q,
+        "mode": mode,
+        "explain": parsed.explain,
+        "command": effective_command,
+        "risk": verdict.level,
+        "model_risk": parsed.model_risk,
+        "reason": verdict.reason,
+        "consequences": verdict.consequences,
+        "params": parsed.params,
+        "alternatives": verdict.alternatives,
+        "unverified": verdict.unverified,
+        "simulation": simulation,
+        "model": actual_model,
+        "demo": demo,
+        "notice": "只生成 · 不执行 · 不隔离：本工具只展示命令文本与其后果模拟，绝不会替你运行任何命令。",
+    }
