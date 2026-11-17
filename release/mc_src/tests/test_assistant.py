@@ -310,3 +310,12 @@ def test_dot_translated_to_plain_words():
     s = assistant.simulate_command("find . -type f")
     assert "当前文件夹" in s["summary"]
     assert "在 . " not in s["summary"]
+
+
+def test_effects_bound_to_source_command():
+    """每条后果必须绑定产生它的具体命令，避免界面上一堆不知来源的「读取…」。"""
+    s = assistant.simulate_command("ls -lt /tmp | grep log | wc -l")
+    cmds = [e["command"] for e in s["effects"]]
+    assert cmds == ["ls -lt /tmp", "grep log", "wc -l"]
+    # 每条都非空
+    assert all(cmds)

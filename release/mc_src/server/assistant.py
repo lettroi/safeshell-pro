@@ -382,6 +382,7 @@ class Effect:
     kind: str      # read | create | modify | delete | network | permission | process | package | archive | unknown
     target: str
     detail: str
+    command: str = ""  # 产生这条后果的具体命令片段（如 ls -lt / grep error / wc -l）
 
 
 # 命令族 → 只读判定（这些族默认不改变系统状态）
@@ -670,6 +671,10 @@ def simulate_command(command: str, verdict: Verdict | None = None) -> dict[str, 
             fx = [Effect("read", "上一步的输出", f"{verb}{arg_clause}，只读内存中的数据")]
 
         summaries.append(summary)
+        # 每条后果都绑定产生它的具体命令片段，避免界面上出现一堆不知来源的「读取…」
+        for e in fx:
+            if not e.command:
+                e.command = segment
         effects.extend(fx)
         reversibilities.append(rev)
         samples.append(sample)
@@ -683,7 +688,7 @@ def simulate_command(command: str, verdict: Verdict | None = None) -> dict[str, 
             "status": "blocked",
             "head": heads[0] if heads else "",
             "summary": "这条命令已被安全门拦截，不会生成、也不会模拟执行。",
-            "effects": [{"kind": "blocked", "target": "", "detail": "命中不可逆规则：" + (verdict.consequences or verdict.reason)}],
+            "effects": [{"kind": "blocked", "target": "", "detail": "命中不可逆规则：" + (verdict.consequences or verdict.reason), "command": command}],
             "writes_data": False,
             "network_access": False,
             "reversible": "不适用（已拦截）",
@@ -722,7 +727,7 @@ def simulate_command(command: str, verdict: Verdict | None = None) -> dict[str, 
         "status": "simulated",
         "head": heads[0] if heads else "",
         "summary": joined_summary,
-        "effects": [{"kind": e.kind, "target": e.target, "detail": e.detail} for e in effects],
+        "effects": [{"kind": e.kind, "target": e.target, "detail": e.detail, "command": e.command} for e in effects],
         "writes_data": any(writes),
         "network_access": network,
         "reversible": rev,
