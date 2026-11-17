@@ -402,6 +402,85 @@ _PROCESS = {"systemctl", "service", "kill", "pkill", "pgrep", "killall"}
 _ARCHIVE = {"tar", "zip", "unzip", "gzip", "gunzip", "xz", "unxz", "bzip2"}
 _DISK = {"dd", "mkfs", "mkfs.ext4", "mkfs.xfs", "fdisk"}
 
+# ---------------------------------------------------------------------------
+# 选项语义层：把命令参数翻译成小白能懂的白话（用于模拟文案，纯查表，零执行）
+# ---------------------------------------------------------------------------
+
+# find -printf 的格式符 → 人话
+_PRINTF_DIRECTIVES: tuple[tuple[str, str], ...] = (
+    ("%T@", "最后修改时间（时间戳）"), ("%TY", "修改年份"), ("%Tm", "修改月份"),
+    ("%Td", "修改日期"), ("%TH", "修改小时"), ("%TM", "修改分钟"),
+    ("%TS", "修改秒数"), ("%Tr", "修改时间"), ("%T+", "完整修改时间"),
+    ("%p", "文件完整路径"), ("%f", "文件名"), ("%s", "文件大小"),
+    ("%n", "硬链接数"), ("%u", "所有者"), ("%g", "所属组"), ("%m", "权限"),
+)
+
+# 通用选项 → 人话（按出现顺序展示）
+_OPTION_MEANINGS: dict[str, str] = {
+    "-type": "按类型筛选", "-f": "普通文件", "-d": "仅目录",
+    "-name": "按名称匹配", "-iname": "忽略大小写匹配",
+    "-size": "按大小筛选", "-mtime": "按修改时间筛选",
+    "-maxdepth": "限制查找深度", "-print": "列出路径",
+    "-r": "倒序", "-n": "按数字排序/指定行数", "-h": "易读单位",
+    "-a": "含隐藏文件", "-l": "详细信息", "-v": "显示过程",
+    "-i": "忽略大小写", "-c": "只显示行数", "-w": "只显示词数",
+    "--max-count": "限制条数",
+}
+
+# 管道中常见「消费上游数据」的命令：它们处理的是上一步的输出，不是磁盘上的文件
+_PIPE_CONSUMERS = {"sort", "head", "tail", "grep", "egrep", "fgrep", "rg", "wc",
+                   "uniq", "cut", "awk", "sed", "tr", "column", "jq", "less", "more"}
+
+
+def _describe_printf(fmt: str) -> str:
+    """把 find -printf 的格式串翻译成人话，例如 '%T@ %p\\n' → 最后修改时间、文件完整路径（逐行）。"""
+    hits: list[str] = []
+    for token, meaning in _PRINTF_DIRECTIVES:
+        if token in fmt and meaning not in hits:
+            hits.append(meaning)
+    if "\\n" in fmt:
+        hits.append("每条占一行")
+    return "、".join(hits) if hits else "按指定格式输出"
+
+
+def _arg_flags(tokens: list[str]) -> list[str]:
+    """挑出命令里的选项与紧跟的关键取值，翻译成人话列表。排除子命令头本身。"""
+    out: list[str] = []
+    seen: set[str] = set()
+    head = tokens[0] if tokens else ""
+    i = 1
+    while i < len(tokens):
+        tok = tokens[i]
+        # find -printf 的格式串单独解释
+        if tok == "-printf" and i + 1 < len(tokens):
+            desc = _describe_printf(tokens[i + 1])
+            if desc not in seen:
+                out.append(f"按格式打印（{desc}）"); seen.add(desc)
+            i += 2
+            continue
+        # find -type f/d：把取值也翻出来（普通文件 / 目录）
+        if tok == "-type" and i + 1 < len(tokens):
+            value = tokens[i + 1]
+            meaning = {"f": "只看普通文件", "d": "只看目录", "l": "只看符号链接"}.get(value, f"按类型 {value} 筛选")
+            if meaning not in seen:
+                out.append(meaning); seen.add(meaning)
+            i += 2
+            continue
+        if tok in _OPTION_MEANINGS:
+            meaning = _OPTION_MEANINGS[tok]
+            # head/tail 的 -n 是「行数」，不是排序；其它命令的 -n 才可能是数值排序
+            if tok == "-n" and head in {"head", "tail"}:
+                meaning = "取行数"
+            # 带数值的选项，把值带上更清楚
+            if tok in {"-n", "--max-count", "-maxdepth", "-mtime", "-size", "-d"} and i + 1 < len(tokens):
+                nxt = tokens[i + 1]
+                if re.fullmatch(r"\d+", nxt):
+                    meaning = f"{meaning} {nxt}"
+            if meaning not in seen:
+                out.append(meaning); seen.add(meaning)
+        i += 1
+    return out
+
 
 def _summary_for(head: str, tokens: list[str], flags: set[str], paths: list[str]) -> tuple[str, list[Effect], str, str]:
     """返回 (一句话摘要, 影响列表, 可逆性, 预期输出示例)。全部为文本推演。"""
@@ -420,17 +499,23 @@ def _summary_for(head: str, tokens: list[str], flags: set[str], paths: list[str]
                     [Effect("read", target, "逐行扫描并输出匹配的行")],
                     "无副作用", "（示例）只显示包含关键词的行，可加 -n 显示行号")
         if head == "find":
+            arg_desc = _arg_flags(tokens)
+            arg_clause = ("；具体条件：" + "，".join(arg_desc)) if arg_desc else ""
             if "-delete" in tokens:
-                return (f"在 {target} 中按条件查找并**直接删除**匹配项，删除不可恢复。",
-                        [Effect("delete", target, "删除所有匹配到的文件或目录（不可恢复）")],
+                return (f"在 {target} 中按条件查找并**直接删除**匹配项，删除不可恢复{arg_clause}。",
+                        [Effect("delete", target, "删除所有匹配到的文件或目录（不可恢复）" + arg_clause)],
                         "不可逆", "（示例）通常无输出；建议先去掉 -delete、加 -print 预览匹配结果")
             if "-exec" in tokens:
-                return (f"在 {target} 中查找匹配项，并对每一项执行指定命令；影响取决于被执行的命令。",
-                        [Effect("modify", target, "对匹配项逐一执行 -exec 指定的操作")],
+                return (f"在 {target} 中查找匹配项，并对每一项执行指定命令；影响取决于被执行的命令{arg_clause}。",
+                        [Effect("modify", target, "对匹配项逐一执行 -exec 指定的操作" + arg_clause)],
                         "视具体命令而定", "（示例）建议先用 -print 预览匹配范围")
-            return (f"在 {target} 中按条件查找文件，只读取不改动。",
-                    [Effect("read", target, "递归遍历目录并输出符合条件的路径")],
-                    "无副作用", "（示例）列出匹配到的文件路径")
+            if "-printf" in tokens:
+                sample = "（示例）按你指定的格式逐行输出，每行一项，例如：2026-11-17 18:30 ./app.log"
+            else:
+                sample = "（示例）逐行列出匹配到的文件路径"
+            return (f"在 {target} 中递归查找符合条件的文件，只读取不改动{arg_clause}。",
+                    [Effect("read", target, "遍历目录、匹配条件并输出结果" + arg_clause)],
+                    "无副作用", sample)
         if head in {"ps", "top", "htop"}:
             return "查看当前运行的进程列表，只读取信息。", [Effect("read", "进程表", "读取进程状态并显示")], "无副作用", "（示例）PID  USER  %CPU  COMMAND ..."
         if head in {"df", "du"}:
@@ -528,6 +613,10 @@ def simulate_command(command: str, verdict: Verdict | None = None) -> dict[str, 
     samples: list[str] = []
     heads: list[str] = []
 
+    # 管道链：区分「第一段（读磁盘）」与「后续段（消费上一步的输出）」
+    has_pipe = bool(re.search(r"\|\s*\S", command)) and "||" not in command
+    seen_sources = 0  # 已经产生的输出源数量，>=1 时说明当前段在消费上游
+
     for segment in (p.strip() for p in _SPLIT_RE.split(command)):
         if not segment:
             continue
@@ -541,10 +630,35 @@ def simulate_command(command: str, verdict: Verdict | None = None) -> dict[str, 
         head, flags, paths = tokens[0], _flags(tokens), _paths(tokens)
         heads.append(head)
         summary, fx, rev, sample = _summary_for(head, tokens, flags, paths)
+
+        # 管道下游命令：纠正「当前位置」这种误导性描述，改成接收上游数据
+        if has_pipe and seen_sources >= 1 and head in _PIPE_CONSUMERS:
+            arg_desc = _arg_flags(tokens)
+            arg_clause = ("（" + "，".join(arg_desc) + "）") if arg_desc else ""
+            # head -n 10 → 直接说「前 10 条」，比「取行数 10」更自然
+            n_count = None
+            if head in {"head", "tail"} and "-n" in tokens:
+                j = tokens.index("-n")
+                if j + 1 < len(tokens) and re.fullmatch(r"\d+", tokens[j + 1]):
+                    n_count = tokens[j + 1]
+            verb = {
+                "sort": "把上一步的结果排序", "head": f"只取上一步结果的前 {n_count} 条" if n_count else "只取上一步结果的前若干条",
+                "tail": f"只取上一步结果的后 {n_count} 条" if n_count else "只取上一步结果的后若干条",
+                "grep": "从上游结果里筛出匹配的行",
+                "wc": "统计上一步结果的行/词数", "uniq": "去掉上游结果里相邻重复的行",
+                "cut": "按列截取上游结果", "awk": "逐行处理上游结果", "sed": "按规则改写上游结果",
+            }.get(head, f"继续处理上一步的结果（{head}）")
+            # head/tail 已把条数写进动词，就不再重复「取行数 N」
+            if head in {"head", "tail"} and n_count:
+                arg_clause = ""
+            summary = f"{verb}{arg_clause}，只读数据不改动文件。"
+            fx = [Effect("read", "上一步的输出", f"{verb}{arg_clause}，只读内存中的数据")]
+
         summaries.append(summary)
         effects.extend(fx)
         reversibilities.append(rev)
         samples.append(sample)
+        seen_sources += 1
 
     writes = [e.kind in {"create", "modify", "delete", "permission", "package", "process", "archive"} for e in effects]
     network = any(e.kind == "network" for e in effects)
@@ -573,16 +687,31 @@ def simulate_command(command: str, verdict: Verdict | None = None) -> dict[str, 
         warnings.append(verdict.consequences)
     warnings.extend(verdict.alternatives[:2])
 
+    # 管道命令：把三段拼成一条连贯叙述，避免重复啰嗦；示例只留第一条（最贴近用户所见）
+    if has_pipe and len(summaries) > 1:
+        parts = []
+        for s in summaries:
+            piece = s.rstrip("。")
+            piece = re.sub(r"[，,]?(不改动任何文件|不会改动任何文件|只读数据不改动文件|文件本身不会改变)", "", piece)
+            piece = piece.strip("，, ")
+            if piece:
+                parts.append(piece)
+        joined_summary = "，接着".join(parts) + "。全程只读，不会改动任何文件。"
+        shown_samples = samples[:1]
+    else:
+        joined_summary = " ".join(summaries) if summaries else "空命令，无可模拟内容。"
+        shown_samples = samples[:2]
+
     return {
         "command": command,
         "status": "simulated",
         "head": heads[0] if heads else "",
-        "summary": " ".join(summaries) if summaries else "空命令，无可模拟内容。",
+        "summary": joined_summary,
         "effects": [{"kind": e.kind, "target": e.target, "detail": e.detail} for e in effects],
         "writes_data": any(writes),
         "network_access": network,
         "reversible": rev,
-        "sample_output": "\n".join(samples) if samples else "无",
+        "sample_output": "\n".join(shown_samples) if shown_samples else "无",
         "warnings": list(dict.fromkeys(warnings)),
     }
 

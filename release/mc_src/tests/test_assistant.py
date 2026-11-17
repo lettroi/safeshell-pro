@@ -252,3 +252,51 @@ def test_prompt_no_longer_rewrites_intent():
     assert "不要给破坏性命令" not in combined
     assert "把「删除」换成「查看」" in sys  # 明确禁止换意图
     assert "忠实" in combined
+
+
+# ---- 2026-11-17 第三轮：选项语义与管道描述 ----
+def test_printf_directives_translated():
+    """find -printf 的格式符要翻译成人话，不能留 %T@/%p 这类天书。"""
+    desc = assistant._describe_printf("%T@ %p\\n")
+    assert "最后修改时间" in desc
+    assert "文件完整路径" in desc
+    assert "每条占一行" in desc
+
+
+def test_arg_flags_type_f_and_head_n():
+    """-type f 翻成普通文件；head 的 -n 10 是行数不是排序。"""
+    f = assistant._arg_flags(["find", ".", "-type", "f", "-printf", "%p"])
+    assert any("普通文件" in x for x in f)
+    n = assistant._arg_flags(["head", "-n", "10"])
+    assert any("取行数 10" in x for x in n)
+    assert not any("排序" in x for x in n)
+
+
+def test_pipe_downstream_uses_upstream_output():
+    """管道中段的 target 必须是「上一步的输出」，不能是误导性的「当前位置」。"""
+    cmd = "find . -type f | sort -r | head -n 10"
+    s = assistant.simulate_command(cmd)
+    targets = [e["target"] for e in s["effects"]]
+    assert "上一步的输出" in targets
+    assert "当前位置" not in targets
+    assert any("前 10 条" in e["detail"] for e in s["effects"])
+
+
+def test_pipe_summary_is_coherent():
+    """管道总描述应连贯、不含重复的「不改动任何文件」三次。"""
+    cmd = "find . -type f | sort -r | head -n 10"
+    s = assistant.simulate_command(cmd)
+    assert "接着" in s["summary"]
+    assert s["summary"].count("不改动") <= 1
+    assert "上一步" in s["summary"]
+
+
+def test_find_printf_pipeline_full_example():
+    """用户实测用例：格式符、管道语义、示例输出全部到位。"""
+    cmd = "find . -type f -printf '%TY-%Tm-%Td %Tr %p\\n' | sort -r | head -n 10"
+    s = assistant.simulate_command(cmd)
+    assert "修改年份" in s["summary"]
+    assert "文件完整路径" in s["summary"]
+    assert "%T" not in s["summary"]  # 不残留原始格式符
+    assert "前 10 条" in s["summary"]
+    assert "示例" in s["sample_output"]
