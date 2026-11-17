@@ -300,3 +300,13 @@ def test_find_printf_pipeline_full_example():
     assert "%T" not in s["summary"]  # 不残留原始格式符
     assert "前 10 条" in s["summary"]
     assert "示例" in s["sample_output"]
+
+
+def test_dot_translated_to_plain_words():
+    """shell 的 . 要翻译成「当前文件夹」，不能把符号直接显示给小白。"""
+    assert assistant._friendly_path(".") == "当前文件夹"
+    assert assistant._friendly_path("~/") == "你的家目录"
+    assert assistant._friendly_path("/tmp") == "临时文件夹 /tmp"
+    s = assistant.simulate_command("find . -type f")
+    assert "当前文件夹" in s["summary"]
+    assert "在 . " not in s["summary"]

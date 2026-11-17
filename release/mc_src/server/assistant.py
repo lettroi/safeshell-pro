@@ -443,6 +443,21 @@ def _describe_printf(fmt: str) -> str:
     return "、".join(hits) if hits else "按指定格式输出"
 
 
+def _friendly_path(target: str) -> str:
+    """把 shell 路径符号翻译成小白能懂的说法。纯文本替换，不碰文件系统。"""
+    mapping = {
+        ".": "当前文件夹", "./": "当前文件夹", "": "当前文件夹",
+        "..": "上一级文件夹", "../": "上一级文件夹",
+        "~": "你的家目录", "~/": "你的家目录", "$HOME": "你的家目录",
+        "${HOME}": "你的家目录", "/tmp": "临时文件夹 /tmp",
+    }
+    if target in mapping:
+        return mapping[target]
+    if target.startswith("./"):
+        return "当前文件夹下的 " + target[2:]
+    return target
+
+
 def _arg_flags(tokens: list[str]) -> list[str]:
     """挑出命令里的选项与紧跟的关键取值，翻译成人话列表。排除子命令头本身。"""
     out: list[str] = []
@@ -485,7 +500,7 @@ def _arg_flags(tokens: list[str]) -> list[str]:
 def _summary_for(head: str, tokens: list[str], flags: set[str], paths: list[str]) -> tuple[str, list[Effect], str, str]:
     """返回 (一句话摘要, 影响列表, 可逆性, 预期输出示例)。全部为文本推演。"""
     if head in _READ_ONLY:
-        target = paths[0] if paths else "当前位置"
+        target = _friendly_path(paths[0]) if paths else "当前文件夹"
         if head in {"ls", "tree"}:
             return (f"列出 {target} 的文件清单，只读取信息，不会改动任何文件。",
                     [Effect("read", target, "读取目录条目并显示名称、大小、时间等元信息")],
@@ -569,14 +584,14 @@ def _summary_for(head: str, tokens: list[str], flags: set[str], paths: list[str]
 
     if head in _PROCESS:
         verb = next((t for t in tokens[1:] if t in {"start", "stop", "restart", "disable", "enable"}), "操作")
-        target = paths[0] if paths else (tokens[2] if len(tokens) > 2 else "指定服务/进程")
+        target = _friendly_path(paths[0]) if paths else (tokens[2] if len(tokens) > 2 else "指定服务/进程")
         return (f"{head} 将对 {target} 执行「{verb}」：服务状态或进程会变化，正在运行的任务可能中断。",
                 [Effect("process", target, f"服务/进程状态变为 {verb}")],
                 "重启后可能恢复，未保存的数据不保留",
                 "（示例）systemctl 显示状态变化；kill 成功时无输出")
 
     if head in _ARCHIVE:
-        target = paths[0] if paths else "指定归档"
+        target = _friendly_path(paths[0]) if paths else "指定归档"
         return (f"用 {head} 打包/解压 {target}：可能生成新归档文件或解开覆盖已有文件。",
                 [Effect("archive", target, "读写归档文件")],
                 "视操作而定（解包可能覆盖同名文件）",
