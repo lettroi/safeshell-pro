@@ -31,7 +31,8 @@
 
   /* 目录树 */
   .tree-card{background:var(--card);border:1px solid var(--line);border-radius:18px;padding:16px;box-shadow:var(--shadow);
-    position:sticky;top:18px;max-height:calc(100vh - 40px);display:flex;flex-direction:column}
+    display:flex;flex-direction:column;max-height:calc(100vh - 40px)}
+  /* 不用 sticky：目录卡片随页面自然滚动，避免悬浮盖住右侧结果区；树本身在卡片内滚动 */
   .tree-title{font-size:13px;font-weight:700;color:#3a4452;display:flex;align-items:center;gap:7px;margin-bottom:4px}
   .tree-sub{font-size:11.5px;color:var(--muted);margin-bottom:12px}
   .cwd-chip{background:var(--brand-soft);border:1px solid #d3e0ff;border-radius:10px;padding:8px 10px;
@@ -126,6 +127,10 @@
   .hit .mt{color:#8aa696;margin-left:6px}
   .notfound{background:#fff6e8;border:1px solid #ffe0ad;color:#8a5a00;border-radius:9px;
     padding:8px 11px;font-size:12.5px;margin-top:9px}
+  .realfs.noreturn{background:#f5f7fb;border-color:#dfe5ef}
+  .realfs.noreturn .rh{color:#5a6678}
+  .realfs.noreturn .path{color:#8a94a4}
+  .nr{background:#fff;border:1px dashed #d5dce8;border-radius:9px;padding:9px 12px;font-size:12.5px;color:#59657a}
   .warns{margin-top:14px;display:flex;flex-direction:column;gap:7px}
   .warn{background:#fff8ec;border:1px solid #ffe0b2;color:#8a5a00;border-radius:10px;padding:9px 13px;font-size:12.8px}
   .params{display:flex;flex-wrap:wrap;gap:8px}
@@ -341,12 +346,23 @@ function renderCommandBlock(item, idx, total){
     : `<div class="cmdbox"><code>${esc(text)}</code><button class="copy" data-cmd="${esc(text)}" onclick="copyCmd(this)">复制</button></div>`;
   const n = total>1 ? `<span class="cmd-no">第 ${idx+1} / ${total} 条</span>` : "";
   const rs = (item.simulation&&item.simulation.real_fs);
-  const hitHtml = rs && rs.matched && rs.matched.length
-    ? `<div class="realfs"><div class="rh">🎯 基于真实文件的预测（${esc(rs.matched.length)} 项命中）</div>
+  let hitHtml = "";
+  if(rs && rs.available){
+    const hits = rs.matched||[];
+    if(hits.length){
+      hitHtml = `<div class="realfs"><div class="rh">🎯 基于真实文件的预测（${hits.length} 项命中）</div>
          <div class="path">📍 ${esc(rs.display||"")}</div>
-         <div class="hits">${rs.matched.map(f=>`<span class="hit"><b>${esc(f.name)}</b> · ${esc(f.size)}<span class="mt">${esc(f.mtime)}</span></span>`).join("")}</div>
+         <div class="hits">${hits.map(f=>`<span class="hit"><b>${esc(f.name)}</b> · ${esc(f.size)}<span class="mt">${esc(f.mtime)}</span></span>`).join("")}</div>
          ${rs.exists===false?`<div class="notfound">⚠ 目标文件在当前目录里没找到，命令可能报「文件不存在」。</div>`:''}
-       </div>` : "";
+       </div>`;
+    } else if(rs.no_result){
+      // 明确无返回：标注出来，不留白、不显示误导性示例
+      hitHtml = `<div class="realfs noreturn"><div class="rh">📭 无返回结果</div>
+         <div class="path">📍 ${esc(rs.display||"")}</div>
+         <div class="nr">${esc(rs.no_result_reason||"当前目录下没有符合条件的结果。")}</div>
+       </div>`;
+    }
+  }
   return `<div class="cmd-item">${n}${badge}${cmd}${blocked?`<div class="err" style="margin-top:8px">这条命令命中不可逆规则，已拒绝输出，请勿执行。${item.consequences?esc(item.consequences):""}</div>`:""}${hitHtml}</div>`;
 }
 function render(d){

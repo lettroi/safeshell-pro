@@ -654,11 +654,13 @@ def _concrete_preview(command: str, snap: dict[str, Any]) -> dict[str, Any]:
     其余保持抽象示例，不臆造。
     """
     files: list[dict[str, Any]] = snap.get("files", [])
-    dirs: list[dict[str, Any]] = snap.get("dirs", [])
+    dirs: list[dict[str, Any]] = snap.get("files", []) + snap.get("dirs", [])
     matched: list[dict[str, Any]] = []
     lines: list[str] = []
     hint = ""
     exists: bool | None = None
+    no_result = False           # 明确无返回内容（成功无 stdout / 或没有匹配项）
+    no_result_reason = ""
 
     try:
         tokens = shlex.split(command, posix=True)
@@ -667,7 +669,71 @@ def _concrete_preview(command: str, snap: dict[str, Any]) -> dict[str, Any]:
     head = tokens[0] if tokens else ""
     rest = tokens[1:]
 
-    # 命令里是否限定了「只看文件」与名字通配 / 大小阈值
+    # 取第一个像路径的参数（排除 - 开头的选项），用于判断目标是否真实存在
+    target = None
+    for t in rest:
+        if t.startswith("-"):
+            continue
+        if "/" in t or t in {".", ".."} or not t.startswith("%"):
+            target = t.strip("'\"")
+            break
+
+    def find_target():
+        """返回目标文件在快照中的条目（仅按最后一段名字匹配，只读元数据）。"""
+        if not target:
+            return None
+        base = target.rstrip("/").split("/")[-1] or "."
+        if base in {".", ".."}:
+            return {"name": base, "size": 0, "mtime": ""}
+        for f in dirs:
+            if f["name"] == base:
+                return f
+        return None
+
+    # ── 类别 A：成功时无 stdout 的操作（rm/mkdir/touch/…）───────────────
+    # 这类命令的后果是「改动」，不应把整目录文件列为命中；只反映目标本身。
+    _SILENT_OPS = {"rm", "rmdir", "unlink", "shred", "truncate", "mkdir", "touch",
+                   "cp", "mv", "ln", "chmod", "chown", "chgrp"}
+    if head in _SILENT_OPS:
+        t = find_target()
+        exists = t is not None
+        if t is not None:
+            matched = [{"name": t["name"], "size": _fmt_size(t.get("size", 0)), "mtime": t.get("mtime", "")}]
+        if not exists and target:
+            base = target.rstrip("/").split("/")[-1]
+            hint = (f"提示：当前目录里**没有**名为 {base} 的项目；"
+                    f"如果就这样执行，命令多半会报 “No such file or directory”。")
+            no_result, no_result_reason = True, "目标不存在，命令不会成功返回。"
+        else:
+            no_result, no_result_reason = True, "这类命令执行成功时不会打印任何内容（无标准输出）。"
+        lines = []
+        return {
+            "matched": matched, "lines": lines, "hint": hint, "exists": exists,
+            "no_result": no_result, "no_result_reason": no_result_reason,
+            "snapshot_display": snap.get("display", ""), "scanned_count": snap.get("count", 0),
+        }
+
+    # ── 类别 B：读文件内容的命令（cat/grep/head/tail…）─────────────────────
+    # 我们绝不读文件内容，所以不臆造输出；只反映目标是否存在。
+    _CONTENT_READ = {"cat", "head", "tail", "grep", "egrep", "fgrep", "rg", "less", "more", "wc", "sed", "awk"}
+    if head in _CONTENT_READ and target:
+        t = find_target()
+        exists = t is not None
+        if t is not None:
+            matched = [{"name": t["name"], "size": _fmt_size(t.get("size", 0)), "mtime": t.get("mtime", "")}]
+            hint = "输出内容取决于文件本身；出于隐私，本工具不读取文件内容，因此不列举具体文本行。"
+        else:
+            base = target.rstrip("/").split("/")[-1]
+            hint = f"提示：当前目录里**没有**名为 {base} 的项目；命令多半会报 “No such file or directory”。"
+            no_result, no_result_reason = True, "目标不存在，命令不会成功返回。"
+        return {
+            "matched": matched, "lines": [], "hint": hint, "exists": exists,
+            "no_result": no_result, "no_result_reason": no_result_reason,
+            "snapshot_display": snap.get("display", ""), "scanned_count": snap.get("count", 0),
+        }
+
+    # ── 类别 C：元数据查询命令（ls/find/du/df/tree）────────────────────────
+    # 按条件过滤真实文件，列出具体名字/大小/时间；无命中时明确标注「无返回」。
     name_pat = None
     size_min = None
     if "-name" in rest:
@@ -684,9 +750,9 @@ def _concrete_preview(command: str, snap: dict[str, Any]) -> dict[str, Any]:
 
     candidates = list(files)
     if head == "ls":
-        candidates = list(files) + list(dirs)
+        candidates = list(files) + snap.get("dirs", [])
     elif head in {"du", "df"}:
-        candidates = list(dirs) + list(files)
+        candidates = snap.get("dirs", []) + list(files)
     if name_pat:
         candidates = [f for f in candidates if _glob_match(name_pat, f["name"])]
     if size_min is not None:
@@ -704,7 +770,6 @@ def _concrete_preview(command: str, snap: dict[str, Any]) -> dict[str, Any]:
     else:
         candidates.sort(key=lambda f: f["name"].lower())
 
-    # head/tail -n N、find -printf 常配 | head：限制条数
     n = None
     if head in {"head", "tail"} and "-n" in rest:
         i = rest.index("-n")
@@ -714,7 +779,6 @@ def _concrete_preview(command: str, snap: dict[str, Any]) -> dict[str, Any]:
         m = re.search(r"\bhead\s+-n\s+(\d+)", command)
         if m:
             n = int(m.group(1))
-    # ls | head -n 10 之类：n 已拿到；find 默认全部展示（受 MAX_ENTRIES 限制）
     shown = candidates[:n] if n else candidates[:20]
 
     for f in shown:
@@ -728,30 +792,13 @@ def _concrete_preview(command: str, snap: dict[str, Any]) -> dict[str, Any]:
         else:
             lines.append(f"./{f['name']}")
 
-    if head in {"rm", "rmdir", "unlink", "cat", "head", "tail", "grep", "cp", "mv", "chmod", "touch", "mkdir"}:
-        # 取第一个像路径的参数（排除 - 开头），检查是否真实存在
-        target = None
-        for t in rest:
-            if t.startswith("-"):
-                continue
-            if "/" in t or t in {".", ".."} or not t.startswith("%"):
-                target = t.strip("'\"")
-                break
-        if target:
-            base_name = target.rstrip("/").split("/")[-1] or "."
-            found = any(f["name"] == base_name for f in files + dirs) if base_name not in {".", ".."} else True
-            exists = found
-            if not found:
-                hint = (f"提示：当前目录里**没有**名为 {base_name} 的项目；"
-                        f"如果就这样执行，命令多半会报 “No such file or directory”。")
+    if not matched and head in {"find", "ls", "du", "df", "tree"}:
+        no_result, no_result_reason = True, "在这个目录里**没有符合条件的文件**（无返回结果）。"
 
     return {
-        "matched": matched,
-        "lines": lines,
-        "hint": hint,
-        "exists": exists,
-        "snapshot_display": snap.get("display", ""),
-        "scanned_count": snap.get("count", 0),
+        "matched": matched, "lines": lines, "hint": hint, "exists": exists,
+        "no_result": no_result, "no_result_reason": no_result_reason,
+        "snapshot_display": snap.get("display", ""), "scanned_count": snap.get("count", 0),
     }
 
 
@@ -877,14 +924,16 @@ def simulate_command(command: str, verdict: Verdict | None = None,
             "scanned": concrete.get("scanned_count", 0),
             "matched": concrete.get("matched", []),
             "exists": concrete.get("exists"),
+            "no_result": bool(concrete.get("no_result")),
+            "no_result_reason": concrete.get("no_result_reason", ""),
             "note": "基于真实目录的只读元数据预测：文件名、大小、修改时间均为真实值，但未读取文件内容。",
         }
         if concrete["lines"]:
             real_lines = concrete["lines"]
             output = ("（基于真实文件，非示例）\n" + "\n".join(real_lines))
-        if concrete["hint"]:
-            # hint 已进 warnings，避免重复；这里只保留真实输出
-            pass
+        elif concrete.get("no_result"):
+            # 明确无返回：不显示误导性的「（示例）会列出文件…」
+            output = "【无返回结果】" + concrete.get("no_result_reason", "")
 
     return {
         "command": command,

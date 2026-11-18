@@ -137,6 +137,35 @@ def test_concrete_preview_delete_missing_target(browse_root):
     preview = assistant._concrete_preview("rm /tmp/no_such_file_xyz.log", snap)
     assert preview["exists"] is False
     assert "没有" in preview["hint"]
+    # 修复：删除命令无命中时 matched 必须为空，不能把整目录文件列进来
+    assert preview["matched"] == []
+    assert preview["no_result"] is True
+
+
+def test_concrete_preview_silent_op_no_stdout(browse_root):
+    """rm 成功时无标准输出 —— 必须明确标注无返回，而不是列一堆无关文件。"""
+    snap = fsview.snapshot("proj")
+    preview = assistant._concrete_preview("rm app.log", snap)
+    assert preview["exists"] is True
+    assert [m["name"] for m in preview["matched"]] == ["app.log"]
+    assert preview["no_result"] is True
+    assert "不会打印" in preview["no_result_reason"]
+
+
+def test_concrete_preview_query_no_match(browse_root):
+    """find -name 无匹配文件时明确标注无返回。"""
+    snap = fsview.snapshot("proj")
+    preview = assistant._concrete_preview("find . -name '*.doesnotexist'", snap)
+    assert preview["matched"] == []
+    assert preview["no_result"] is True
+    assert "没有符合条件" in preview["no_result_reason"]
+
+
+def test_simulate_no_result_overrides_misleading_sample(browse_root):
+    """无返回时 sample_output 不能显示误导性的「（示例）会列出文件」。"""
+    s = assistant.simulate_command("find . -name '*.doesnotexist'", fs_path="proj")
+    assert "无返回结果" in s["sample_output"]
+    assert s["real_fs"]["no_result"] is True
 
 
 def test_simulate_with_fs_path_returns_real_fs(browse_root):
