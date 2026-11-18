@@ -195,18 +195,45 @@ const esc = (s) => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&
 const KIND = {read:"读取",create:"新建",modify:"修改/写入",delete:"删除",network:"网络访问",permission:"权限变更",process:"进程/服务",package:"软件安装",archive:"压缩/解压",blocked:"已拦截",unknown:"未知"};
 const ICO = {dir:"📁",file:"📄",link:"🔗"};
 
+// 网络请求自动重试：WSL 虚拟机会间歇重启（约 20s 空窗），重试让瞬时断连对用户无感。
+// 只重试真正的网络失败和 5xx；业务错误由后端返回 HTTP 200 + ok:false，不走重试。
+async function fetchWithRetry(url, options, tries, waits){
+  tries = tries || 6; waits = waits || [800,1500,2500,3500,4500,5500];
+  let last;
+  for(let i=0;i<tries;i++){
+    try{
+      const r = await fetch(url, options);
+      if(r.status>=500) throw new Error("服务正在重启("+r.status+")");
+      return r;
+    }catch(e){
+      last=e;
+      if(i<tries-1){
+        const ld = document.querySelector("#loadingMsg");
+        if(ld) ld.textContent = "服务正在恢复，正在重试…(第 "+(i+1)+"/"+tries+" 次)";
+        await new Promise(res=>setTimeout(res, waits[Math.min(i,waits.length-1)]));
+      }
+    }
+  }
+  throw last;
+}
+
 // ---- 状态 ----
 const state = { fsPath:"", display:"", cache:{}, roots:[] };
 
 // ---- 目录树 ----
 async function fetchDir(path){
-  const r = await fetch("/api/v1/assistant/fs?path=" + encodeURIComponent(path));
+  const r = await fetchWithRetry("/api/v1/assistant/fs?path=" + encodeURIComponent(path));
   return await r.json();
 }
 function fmtSize(n){ if(n>=1048576) return (n/1048576).toFixed(1)+"M"; if(n>=1024) return (n/1024).toFixed(0)+"K"; return n+"B"; }
 
 async function initTree(){
-  const d = await fetchDir("");
+  let d;
+  try{ d = await fetchDir(""); }
+  catch(e){
+    $("#tree").innerHTML = '<div class="tree-empty">目录服务暂时不可用。<span onclick="initTree()" style="color:#3b6ef5;cursor:pointer">点此重试</span></div>';
+    return;
+  }
   state.roots = (d.available_roots||[]).filter(r=>r.available);
   if(!state.roots.length){ $("#tree").innerHTML = '<div class="tree-empty">未挂载可浏览目录（需在 docker-compose 配置只读卷）。</div>'; return; }
   // 默认选中第一个根
@@ -280,7 +307,7 @@ async function ask(){
   if(!q){ $("#q").focus(); return; }
   $("#go").disabled = true; $("#loading").style.display="flex"; $("#result").style.display="none";
   try{
-    const resp = await fetch("/api/v1/assistant/generate", {
+    const resp = await fetchWithRetry("/api/v1/assistant/generate", {
       method:"POST", headers:{"Content-Type":"application/json"},
       body: JSON.stringify({query:q, fs_path:state.fsPath||null})
     });
@@ -289,7 +316,7 @@ async function ask(){
     $("#result").style.display="block";
     saveHistory(q);
   }catch(err){
-    $("#result").innerHTML = `<div class="err">请求失败：${esc(err.message)}。请确认服务正在运行。</div>`;
+    $("#result").innerHTML = `<div class="err">已重试多次仍连不上服务（${esc(err.message)}）。可能是 WSL 虚拟机刚重启、网关正在恢复，请稍等几秒再点「生成命令」，或刷新页面重试。</div>`;
     $("#result").style.display="block";
   }finally{
     $("#go").disabled=false; $("#loading").style.display="none";
