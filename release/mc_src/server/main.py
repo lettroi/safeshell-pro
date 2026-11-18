@@ -20,6 +20,10 @@ from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse, Str
 from fastapi.staticfiles import StaticFiles
 
 from . import assistant, cache, connect, db, knowledge, router_engine as engine, cost, rate_limit
+try:
+    from . import fsview
+except ImportError:  # pragma: no cover
+    fsview = None  # type: ignore[assignment]
 from .raw import (RawCompletionRequest, raw_completion, warmup_models, audit_fields,
                   ModelDisabledError, ModelCoolingDownError)
 from .agent import run_chat
@@ -629,15 +633,30 @@ async def assistant_generate(payload: dict) -> dict:
     if mode not in {"nl2cmd", "cmd2nl"}:
         mode = "nl2cmd"
     model = payload.get("model")
+    fs_path = str(payload.get("fs_path") or "") or None
     return await assistant.generate_command(query, mode=mode,
-                                            model=str(model) if model else None)
+                                            model=str(model) if model else None,
+                                            fs_path=fs_path)
+
+
+@app.get("/api/v1/assistant/fs", summary="只读浏览真实目录（仅元数据，绝不读内容/执行命令）",
+         description="列出已挂载逻辑根下某目录的名字/类型/大小/修改时间；路径白名单+不跟随软链，"
+                     "不读取任何文件内容、不执行任何命令。用于让后果预测基于真实文件。")
+async def assistant_fs(path: str = "") -> dict:
+    if fsview is None:
+        return {"ok": False, "error": "目录浏览模块不可用", "available_roots": []}
+    try:
+        return fsview.list_dir(path)
+    except fsview.FsError as exc:
+        return {"ok": False, "error": str(exc), "available_roots": fsview.available_roots()}
 
 
 @app.post("/api/v1/assistant/simulate", summary="单独模拟一条命令的执行后果（不执行）",
           description="输入一条命令文本，纯静态推演它执行后会引发什么结果；绝不真正执行该命令。")
 async def assistant_simulate(payload: dict) -> dict:
     command = str(payload.get("command") or "")
-    return assistant.simulate_command(command)
+    fs_path = str(payload.get("fs_path") or "") or None
+    return assistant.simulate_command(command, fs_path=fs_path)
 
 
 # 可选：托管已构建的 React 前端（必须放在所有 API 路由之后）。

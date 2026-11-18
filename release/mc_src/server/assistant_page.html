@@ -15,34 +15,64 @@
   body{margin:0;background:var(--bg);color:var(--ink);
     font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;
     line-height:1.6;-webkit-font-smoothing:antialiased}
-  .wrap{max-width:820px;margin:0 auto;padding:28px 20px 60px}
+  .wrap{max-width:1180px;margin:0 auto;padding:26px 20px 60px}
   header{display:flex;align-items:center;gap:12px;margin-bottom:6px}
   .logo{width:40px;height:40px;border-radius:12px;background:linear-gradient(135deg,#3b6ef5,#6a8dff);
     display:grid;place-items:center;color:#fff;font-size:20px;box-shadow:0 4px 12px rgba(59,110,245,.3)}
   h1{font-size:21px;margin:0;letter-spacing:.2px}
-  .sub{color:var(--muted);font-size:13px;margin:2px 0 22px}
+  .sub{color:var(--muted);font-size:13px;margin:2px 0 20px}
   .notice{display:flex;align-items:center;gap:8px;background:var(--brand-soft);color:#2749a8;
-    border:1px solid #d3e0ff;border-radius:12px;padding:10px 14px;font-size:12.5px;margin-bottom:22px}
+    border:1px solid #d3e0ff;border-radius:12px;padding:10px 14px;font-size:12.5px;margin-bottom:20px}
   .notice b{font-weight:700}
   .dot{width:7px;height:7px;border-radius:50%;background:var(--brand);flex:none}
 
+  .layout{display:grid;grid-template-columns:310px 1fr;gap:18px;align-items:start}
+  @media(max-width:900px){.layout{grid-template-columns:1fr}}
+
+  /* 目录树 */
+  .tree-card{background:var(--card);border:1px solid var(--line);border-radius:18px;padding:16px;box-shadow:var(--shadow);
+    position:sticky;top:18px;max-height:calc(100vh - 40px);display:flex;flex-direction:column}
+  .tree-title{font-size:13px;font-weight:700;color:#3a4452;display:flex;align-items:center;gap:7px;margin-bottom:4px}
+  .tree-sub{font-size:11.5px;color:var(--muted);margin-bottom:12px}
+  .cwd-chip{background:var(--brand-soft);border:1px solid #d3e0ff;border-radius:10px;padding:8px 10px;
+    font-size:12px;color:#2749a8;word-break:break-all;margin-bottom:10px}
+  .cwd-chip b{display:block;font-size:10.5px;color:#6a86c9;letter-spacing:.5px;margin-bottom:2px}
+  .tree{overflow:auto;flex:1;font-size:12.5px;padding-right:4px}
+  .tree button{all:unset;cursor:pointer}
+  .node{display:flex;align-items:center;gap:6px;padding:4px 6px;border-radius:7px;color:#3d4756;white-space:nowrap}
+  .node:hover{background:#f2f5fa}
+  .node.sel{background:var(--brand-soft);color:#2749a8;font-weight:600}
+  .node .arrow{width:12px;color:#9aa5b5;font-size:10px;flex:none}
+  .node .ico{flex:none;font-size:13px}
+  .node .nm{overflow:hidden;text-overflow:ellipsis}
+  .node .sz{color:#a3adbb;font-size:11px;margin-left:auto;flex:none}
+  .kids{margin-left:14px;border-left:1px dashed #e2e8f0;padding-left:6px}
+  .tree-empty{color:var(--muted);font-size:12px;padding:10px 4px}
+  .tree-foot{font-size:11px;color:#98a2b3;margin-top:10px;border-top:1px solid var(--line);padding-top:8px}
+
+  /* 问答区 */
   .ask{background:var(--card);border:1px solid var(--line);border-radius:18px;padding:18px;box-shadow:var(--shadow)}
   .ask label{display:block;font-size:13px;font-weight:600;color:#3a4452;margin-bottom:9px}
   .row{display:flex;gap:10px;align-items:stretch}
-  textarea{flex:1;resize:vertical;min-height:78px;border:1px solid #d7dde7;border-radius:12px;
+  textarea{flex:1;resize:vertical;min-height:76px;border:1px solid #d7dde7;border-radius:12px;
     padding:12px 14px;font-size:15px;font-family:inherit;color:var(--ink);outline:none;background:#fcfdff;transition:.15s}
   textarea:focus{border-color:var(--brand);box-shadow:0 0 0 3px rgba(59,110,245,.12)}
-  button{gap:8px;border:0;border-radius:12px;padding:0 22px;font-size:14.5px;font-weight:600;cursor:pointer;
+  button.btn{gap:8px;border:0;border-radius:12px;padding:0 22px;font-size:14.5px;font-weight:600;cursor:pointer;
     background:var(--brand);color:#fff;transition:.15s;display:inline-flex;align-items:center;justify-content:center}
-  button:hover:not(:disabled){background:#2f60e0;transform:translateY(-1px)}
-  button:disabled{opacity:.55;cursor:not-allowed}
-  .examples{display:flex;flex-wrap:wrap;gap:8px;margin-top:13px}
-  .examples span{font-size:12px;color:var(--muted);align-self:center;margin-right:2px}
+  button.btn:hover:not(:disabled){background:#2f60e0;transform:translateY(-1px)}
+  button.btn:disabled{opacity:.55;cursor:not-allowed}
+  .examples{display:flex;flex-wrap:wrap;gap:8px;margin-top:13px;align-items:center}
+  .examples span.tip{font-size:12px;color:var(--muted)}
   .ex{background:var(--chip);border:1px solid var(--line);border-radius:999px;padding:5px 12px;
     font-size:12.5px;color:#48546a;cursor:pointer;transition:.15s}
   .ex:hover{background:var(--brand-soft);border-color:#c9d8ff;color:#2749a8}
+  .history{margin-top:10px;font-size:11.5px;color:var(--muted)}
+  .history .hchip{display:inline-block;background:#f7f9fc;border:1px solid var(--line);border-radius:8px;
+    padding:3px 8px;margin:3px 5px 0 0;cursor:pointer;color:#5a6678;max-width:260px;
+    overflow:hidden;text-overflow:ellipsis;white-space:nowrap;vertical-align:bottom}
+  .history .hchip:hover{background:var(--brand-soft);color:#2749a8}
 
-  .result{display:none;margin-top:22px;animation:rise .35s ease}
+  .result{display:none;margin-top:20px;animation:rise .35s ease}
   @keyframes rise{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:none}}
   .card{background:var(--card);border:1px solid var(--line);border-radius:16px;padding:18px 20px;
     box-shadow:var(--shadow);margin-bottom:14px}
@@ -55,7 +85,6 @@
   .copy:hover{background:#324261;color:#fff}
   .cmd-item{margin-bottom:14px;padding-bottom:14px;border-bottom:1px dashed var(--line)}
   .cmd-item:last-child{border-bottom:0;margin-bottom:0;padding-bottom:0}
-  .cmd-item .risk{margin-right:10px}
   .cmd-no{font-size:12px;color:var(--muted);font-weight:600;margin-right:10px}
   .cmdbox.blocked{background:#3a1a1a;opacity:.92}
   .cmdbox.blocked code{color:#ffb4ad;text-decoration:line-through}
@@ -71,6 +100,7 @@
 
   .sim-head{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap}
   .badge-sim{font-size:11px;color:#2749a8;background:var(--brand-soft);border-radius:999px;padding:4px 10px;font-weight:600}
+  .badge-real{font-size:11px;color:#0f7a45;background:#e6f7ee;border-radius:999px;padding:4px 10px;font-weight:600}
   .summary{font-size:14.5px;margin:12px 0 16px;color:#2c3644}
   .effects{display:flex;flex-direction:column;gap:9px}
   .effect{background:#fafbfd;border:1px solid var(--line);border-radius:10px;padding:10px 13px}
@@ -87,6 +117,15 @@
   .fact .v{font-size:13.5px;font-weight:600;margin-top:2px}
   .sample{background:#0f1729;color:#cdd7e8;border-radius:10px;padding:13px 15px;margin-top:14px;
     font-family:"SFMono-Regular",Consolas,monospace;font-size:12.5px;white-space:pre-wrap;word-break:break-all}
+  .realfs{margin-top:14px;background:#f0faf4;border:1px solid #cdebd8;border-radius:12px;padding:12px 14px}
+  .realfs .rh{font-size:12px;font-weight:700;color:#0f7a45;margin-bottom:8px}
+  .realfs .path{font-size:11.5px;color:#4a7d63;word-break:break-all;margin-bottom:8px}
+  .hits{display:flex;flex-wrap:wrap;gap:7px}
+  .hit{background:#fff;border:1px solid #d5ebde;border-radius:8px;padding:5px 9px;font-size:11.5px;color:#33584a}
+  .hit b{color:#1f7a4d}
+  .hit .mt{color:#8aa696;margin-left:6px}
+  .notfound{background:#fff6e8;border:1px solid #ffe0ad;color:#8a5a00;border-radius:9px;
+    padding:8px 11px;font-size:12.5px;margin-top:9px}
   .warns{margin-top:14px;display:flex;flex-direction:column;gap:7px}
   .warn{background:#fff8ec;border:1px solid #ffe0b2;color:#8a5a00;border-radius:10px;padding:9px 13px;font-size:12.8px}
   .params{display:flex;flex-wrap:wrap;gap:8px}
@@ -100,7 +139,6 @@
   .spin{width:15px;height:15px;border:2px solid #d7dde7;border-top-color:var(--brand);border-radius:50%;animation:sp .7s linear infinite}
   @keyframes sp{to{transform:rotate(360deg)}}
   footer{text-align:center;color:#98a2b3;font-size:11.5px;margin-top:26px}
-  @media(max-width:560px){.row{flex-direction:column}button{height:46px}}
 </style>
 </head>
 <body>
@@ -109,46 +147,134 @@
     <div class="logo">⌘</div>
     <div>
       <h1>命令小助手</h1>
-      <div class="sub" style="margin:0">用大白话描述你想做的事，我来写命令、并告诉你执行后会发生什么。</div>
+      <div class="sub" style="margin:0">用大白话描述你想做的事，我来写命令、并结合你的真实目录预测执行后果。</div>
     </div>
   </header>
 
-  <div class="notice"><span class="dot"></span><span><b>只生成 · 不执行 · 不隔离</b>　我只会把命令文字展示给你，绝不替你运行；“模拟”只是文字推演，不会真的改动你的电脑。</span></div>
+  <div class="notice"><span class="dot"></span><span><b>只生成 · 不执行 · 不隔离</b>　我只会展示命令文字；左侧目录只读取文件名/大小/时间（不读内容），预测也仅是推演，绝不替你运行命令。</span></div>
 
-  <div class="ask">
-    <label for="q">你想做什么？</label>
-    <div class="row">
-      <textarea id="q" placeholder="例如：查看当前目录下占用空间最大的 5 个文件"></textarea>
-      <button id="go">生成命令</button>
-    </div>
-    <div class="examples">
-      <span>试试：</span>
-      <span class="ex">查看大于100M的文件</span>
-      <span class="ex">统计当前目录有多少个文件</span>
-      <span class="ex">找出最近修改的10个文件</span>
-      <span class="ex">删除临时目录下的旧日志</span>
-    </div>
+  <div class="layout">
+    <!-- 左侧：真实目录树 -->
+    <aside class="tree-card">
+      <div class="tree-title">📁 你的真实目录</div>
+      <div class="tree-sub">点目录展开 · 点选一个作为预测基准</div>
+      <div class="cwd-chip" id="cwdChip"><b>预测基准目录</b><span id="cwdText">加载中…</span></div>
+      <div class="tree" id="tree"><div class="tree-empty">正在读取目录…</div></div>
+      <div class="tree-foot">只读元数据 · 软链不展开 · 敏感文件已隐藏</div>
+    </aside>
+
+    <!-- 右侧：问答 -->
+    <main>
+      <div class="ask">
+        <label for="q">你想做什么？</label>
+        <div class="row">
+          <textarea id="q" placeholder="例如：找出当前目录下最近修改的 10 个文件"></textarea>
+          <button class="btn" id="go">生成命令</button>
+        </div>
+        <div class="examples">
+          <span class="tip">试试：</span>
+          <span class="ex">找出最近修改的10个文件</span>
+          <span class="ex">查看大于100M的文件</span>
+          <span class="ex">统计当前目录有多少个文件</span>
+          <span class="ex">删除临时目录下的旧日志</span>
+        </div>
+        <div class="history" id="history"></div>
+      </div>
+
+      <div id="loading" class="loading" style="display:none"><span class="spin"></span>正在看你的目录、写命令并推演后果…</div>
+      <div id="result" class="result"></div>
+    </main>
   </div>
 
-  <div id="loading" class="loading" style="display:none"><span class="spin"></span>正在思考并推演执行后果…</div>
-  <div id="result" class="result"></div>
-
-  <footer>SafeShell Pro · 本地自部署 · 命令由免费大模型生成，安全由本地规则引擎把关</footer>
+  <footer>SafeShell Pro · 本地自部署 · 命令由免费模型生成，安全由本地规则引擎把关，后果基于真实目录只读元数据预测</footer>
 </div>
 
 <script>
 const $ = (s) => document.querySelector(s);
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
 const KIND = {read:"读取",create:"新建",modify:"修改/写入",delete:"删除",network:"网络访问",permission:"权限变更",process:"进程/服务",package:"软件安装",archive:"压缩/解压",blocked:"已拦截",unknown:"未知"};
+const ICO = {dir:"📁",file:"📄",link:"🔗"};
 
-function effectCard(e){
-  const cmd = e.command ? `<div class="ecmd"><span class="ecmd-label">命令</span><code>${esc(e.command)}</code></div>` : "";
-  return `<div class="effect">
-    ${cmd}
-    <div class="t">${KIND[e.kind]||"操作"} ${e.target?`<code>${esc(e.target)}</code>`:""}</div>
-    <div class="d">${esc(e.detail)}</div></div>`;
+// ---- 状态 ----
+const state = { fsPath:"", display:"", cache:{}, roots:[] };
+
+// ---- 目录树 ----
+async function fetchDir(path){
+  const r = await fetch("/api/v1/assistant/fs?path=" + encodeURIComponent(path));
+  return await r.json();
+}
+function fmtSize(n){ if(n>=1048576) return (n/1048576).toFixed(1)+"M"; if(n>=1024) return (n/1024).toFixed(0)+"K"; return n+"B"; }
+
+async function initTree(){
+  const d = await fetchDir("");
+  state.roots = (d.available_roots||[]).filter(r=>r.available);
+  if(!state.roots.length){ $("#tree").innerHTML = '<div class="tree-empty">未挂载可浏览目录（需在 docker-compose 配置只读卷）。</div>'; return; }
+  // 默认选中第一个根
+  selectDir(state.roots[0].label, state.roots[0].display);
+  renderTree();
+}
+function selectDir(path, display){
+  state.fsPath = path; state.display = display;
+  $("#cwdText").textContent = display || path;
+  renderTree();
+}
+function renderTree(){
+  const el = $("#tree");
+  if(!state.roots.length){ return; }
+  el.innerHTML = state.roots.map(r=>{
+    const open = state.cache[r.label];
+    const kids = open ? (open.entries||[]).map(e=>nodeHtml(e, r.label)).join("") : "";
+    return `<div>
+      <div class="node ${state.fsPath===r.label?'sel':''}" onclick="toggleDir('${esc(r.label)}','${esc(r.display)}')">
+        <span class="arrow">${open?'▾':'▸'}</span><span class="ico">📁</span>
+        <span class="nm">${esc(r.label)}</span><span class="sz">${esc(r.display)}</span>
+      </div>
+      ${open?`<div class="kids">${kids||'<div class="tree-empty">空目录</div>'}</div>`:""}
+    </div>`;
+  }).join("");
+}
+function nodeHtml(e, parent){
+  const p = parent + "/" + e.name;
+  const isDir = e.type==="dir";
+  const open = state.cache[p];
+  const sel = state.fsPath===p ? "sel" : "";
+  const arrow = isDir ? `<span class="arrow">${open?'▾':'▸'}</span>` : '<span class="arrow"></span>';
+  const click = isDir ? `toggleDir('${esc(p)}','${esc(e.__display||p)}')` : `selectDir('${esc(parent)}', state.display)`;
+  return `<div>
+    <div class="node ${sel}" onclick="${click}">
+      ${arrow}<span class="ico">${ICO[e.type]||'📄'}</span>
+      <span class="nm" title="${esc(e.name)}">${esc(e.name)}</span>
+      ${e.type==='file'?`<span class="sz">${fmtSize(e.size)}</span>`:''}
+    </div>
+    ${(isDir&&open)?`<div class="kids">${(open.entries||[]).map(x=>nodeHtml(x,p)).join('')||'<div class="tree-empty">空目录</div>'}</div>`:''}
+  </div>`;
+}
+async function toggleDir(path, display){
+  selectDir(path, display);
+  if(state.cache[path]){ delete state.cache[path]; renderTree(); return; }
+  const d = await fetchDir(path);
+  if(!d.ok){ alert(d.error||"无法读取目录"); return; }
+  // 给子项补上展示路径（父展示路径 + 名字）
+  d.entries.forEach(e=>{ e.__display = (display.replace(/\/$/,'') + '/' + e.name); });
+  state.cache[path] = d;
+  renderTree();
 }
 
+// ---- 历史 ----
+function loadHistory(){
+  let h=[]; try{ h=JSON.parse(localStorage.getItem('ss_history')||'[]'); }catch(e){}
+  const el=$("#history");
+  if(!h.length){ el.innerHTML=""; return; }
+  el.innerHTML = '<span class="tip">最近问过：</span>' + h.slice(0,6).map(x=>`<span class="hchip" onclick="reuse(this)" title="${esc(x)}">${esc(x)}</span>`).join("");
+}
+function saveHistory(q){
+  let h=[]; try{ h=JSON.parse(localStorage.getItem('ss_history')||'[]'); }catch(e){}
+  h=[q].concat(h.filter(x=>x!==q)).slice(0,12);
+  localStorage.setItem('ss_history', JSON.stringify(h)); loadHistory();
+}
+function reuse(el){ $("#q").value = el.textContent; ask(); }
+
+// ---- 生成 ----
 async function ask(){
   const q = $("#q").value.trim();
   if(!q){ $("#q").focus(); return; }
@@ -156,11 +282,12 @@ async function ask(){
   try{
     const resp = await fetch("/api/v1/assistant/generate", {
       method:"POST", headers:{"Content-Type":"application/json"},
-      body: JSON.stringify({query:q})
+      body: JSON.stringify({query:q, fs_path:state.fsPath||null})
     });
     const data = await resp.json();
     $("#result").innerHTML = render(data);
     $("#result").style.display="block";
+    saveHistory(q);
   }catch(err){
     $("#result").innerHTML = `<div class="err">请求失败：${esc(err.message)}。请确认服务正在运行。</div>`;
     $("#result").style.display="block";
@@ -171,6 +298,13 @@ async function ask(){
 
 function riskLabel(r){return r==="SAFE"?"安全 · 只读":r==="CAUTION"?"注意 · 请确认":"危险 · 已拦截";}
 
+function effectCard(e){
+  const cmd = e.command ? `<div class="ecmd"><span class="ecmd-label">命令</span><code>${esc(e.command)}</code></div>` : "";
+  return `<div class="effect">
+    ${cmd}
+    <div class="t">${KIND[e.kind]||"操作"} ${e.target?`<code>${esc(e.target)}</code>`:""}</div>
+    <div class="d">${esc(e.detail)}</div></div>`;
+}
 function renderCommandBlock(item, idx, total){
   const blocked = item.blocked;
   const text = blocked ? item.original : item.text;
@@ -179,9 +313,15 @@ function renderCommandBlock(item, idx, total){
     ? `<div class="cmdbox blocked"><code>${esc(item.original)}</code><span class="blocked-tag">已拦截</span></div>`
     : `<div class="cmdbox"><code>${esc(text)}</code><button class="copy" data-cmd="${esc(text)}" onclick="copyCmd(this)">复制</button></div>`;
   const n = total>1 ? `<span class="cmd-no">第 ${idx+1} / ${total} 条</span>` : "";
-  return `<div class="cmd-item">${n}${badge}${cmd}${blocked?`<div class="err" style="margin-top:8px">这条命令命中不可逆规则，已拒绝输出，请勿执行。${item.consequences?esc(item.consequences):""}</div>`:""}</div>`;
+  const rs = (item.simulation&&item.simulation.real_fs);
+  const hitHtml = rs && rs.matched && rs.matched.length
+    ? `<div class="realfs"><div class="rh">🎯 基于真实文件的预测（${esc(rs.matched.length)} 项命中）</div>
+         <div class="path">📍 ${esc(rs.display||"")}</div>
+         <div class="hits">${rs.matched.map(f=>`<span class="hit"><b>${esc(f.name)}</b> · ${esc(f.size)}<span class="mt">${esc(f.mtime)}</span></span>`).join("")}</div>
+         ${rs.exists===false?`<div class="notfound">⚠ 目标文件在当前目录里没找到，命令可能报「文件不存在」。</div>`:''}
+       </div>` : "";
+  return `<div class="cmd-item">${n}${badge}${cmd}${blocked?`<div class="err" style="margin-top:8px">这条命令命中不可逆规则，已拒绝输出，请勿执行。${item.consequences?esc(item.consequences):""}</div>`:""}${hitHtml}</div>`;
 }
-
 function render(d){
   if(!d.ok){
     return `<div class="card"><h2>没能生成命令</h2><div class="err">${esc(d.error||"未知错误")}</div>
@@ -200,6 +340,7 @@ function render(d){
   const alts = (d.alternatives||[]).length
     ? `<ul class="alts">${d.alternatives.map(a=>`<li>${esc(a)}</li>`).join("")}</ul>` : "";
   const warns = (sim.warnings||[]).map(w=>`<div class="warn">⚠ ${esc(w)}</div>`).join("");
+  const real = sim.real_fs && sim.real_fs.available;
 
   return `
   <div class="card">
@@ -207,7 +348,7 @@ function render(d){
       <span class="risk ${riskCls}"><span class="tag"></span>${riskLabel(riskCls)}</span>
       <span class="kv">模型 <b>${esc(d.model)}</b></span>
       ${d.demo?`<span class="kv">演示模式</span>`:""}
-      ${d.unverified?`<span class="kv">含未验证命令</span>`:""}
+      ${real?`<span class="badge-real">● 已结合真实目录</span>`:""}
     </div>
     <h2>① 为你生成的命令</h2>
     ${cmdBlocks}
@@ -235,7 +376,7 @@ function render(d){
   </div>
 
   <div class="card" style="font-size:12.5px;color:var(--muted)">
-    ${esc(d.notice||"")} 模拟结果基于命令文本的静态规则推演，实际情况取决于你的文件、权限与环境；执行与否由你决定。
+    ${esc(d.notice||"")} 预测仅读取目录元数据（文件名/大小/时间），不读文件内容；实际情况仍取决于权限与环境，执行与否由你决定。
   </div>`;
 }
 
@@ -250,6 +391,8 @@ function copyCmd(btn){
 $("#go").addEventListener("click", ask);
 $("#q").addEventListener("keydown", e=>{ if((e.ctrlKey||e.metaKey)&&e.key==="Enter"){ e.preventDefault(); ask(); }});
 document.querySelectorAll(".ex").forEach(el=>el.addEventListener("click",()=>{ $("#q").value=el.textContent; ask(); }));
+loadHistory();
+initTree();
 </script>
 </body>
 </html>

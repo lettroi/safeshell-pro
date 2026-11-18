@@ -152,11 +152,16 @@ cp .env.example .env
   - **后果绑定命令**：每条后果卡片顶部都标出产生它的具体命令（如 `ls -lt` / `grep error` / `wc -l`），管道链的每一段一一对应，不会出现一堆不知来源的「读取…」。
 - **风险色标**：安全（绿，只读）/ 注意（黄，会改动）/ 危险（红，已拦截）。安全判断由服务端确定性门控覆盖模型自评：模型说 SAFE 但命令含命令替换、删系统目录、`curl|sh` 等，一律被提升或拦截，DENY 时命令文本不输出。
 - **占位符提醒**：模型若编造 `/path/to/` 之类占位路径，会标为「注意」并明确提醒替换成真实路径，避免小白复制后报「找不到文件」。
+- **真实目录可视化 + 基于真实文件的预测**（2026-11-18 新增）：页面左侧是**你机器上的真实目录树**，点目录展开、点选一个作为「预测基准目录」。生成命令时，模拟引擎会读取该目录的**只读元数据**（文件名、类型、大小、修改时间），把原来「（示例）app.log」换成**真实命中的文件清单**（真实名字/大小/时间），例如「找出最近修改的 10 个文件」会列出你目录里真实的前 10 个文件；删除类命令会明确告诉你目标文件**到底在不在**。
+  - 安全约束：只 `os.scandir` 读元信息，**不读任何文件内容**；软链不展开；路径白名单（`ASSISTANT_FS_ROOTS`）防止 `..` 逃逸；`.env` / `*.db` / `*token*` 等敏感文件只按「已隐藏」计数、不返回名字。
+  - 目录通过 `docker-compose.yml` 的 `${SFP_BROWSE_PROJECT:-/root/safeshell-pro}` / `${SFP_BROWSE_TMP:-/tmp}` **只读挂载**（`:ro`）进容器；想换目录设这两个环境变量重建即可。
+  - 未挂载目录或未选基准时不报错，自动降级为原来的抽象示例。
+- **本地历史**：最近问过的 6 条问题保存在浏览器 localStorage，点击即可重问。
 - 一键复制命令到剪贴板；`Ctrl/Cmd+Enter` 快速提交。
 
-> 红线不变：**只生成 · 不执行 · 不隔离**。模拟只是"如果执行会发生什么"的文字说明，实际是否执行、在哪执行完全由你决定。
+> 红线不变：**只生成 · 不执行 · 不隔离**。目录只读取名字/大小/时间等元信息（不读内容），模拟只是"如果执行会发生什么"的推演，实际是否执行、在哪执行完全由你决定。
 
-对应 API：`POST /api/v1/assistant/generate`（完整编排）、`POST /api/v1/assistant/simulate`（只模拟一条命令文本），详见 §6。实现见 `server/assistant.py`（行协议解析、门控移植、静态模拟引擎，零执行原语）。
+对应 API：`POST /api/v1/assistant/generate`（完整编排，可带 `fs_path`）、`POST /api/v1/assistant/simulate`（只模拟一条命令文本）、`GET /api/v1/assistant/fs`（只读目录树，可带 `path`），详见 §6。实现见 `server/assistant.py`（行协议解析、门控移植、静态模拟引擎）、`server/fsview.py`（只读目录浏览），均为零执行原语。
 
 ### 3.1 Web 控制台（6 个视图）
 
@@ -329,9 +334,10 @@ bash install.sh stop
 | 方法 | 端点 | 说明 |
 |---|---|---|
 | GET | `/api/v1/health` | 健康检查（容器 healthcheck 使用） |
-| GET | `/assistant` | **命令小助手界面**（面向小白的独立单页；见 §3.0） |
-| POST | `/api/v1/assistant/generate` | 自然语言 → 命令 → 执行后果模拟（body `{"query":...,"mode":"nl2cmd"}`）；门控覆盖模型自评，纯静态模拟不执行 |
-| POST | `/api/v1/assistant/simulate` | 只模拟一条命令文本的后果（body `{"command":...}`），零执行原语 |
+| GET | `/assistant` | **命令小助手界面**（面向小白的独立单页，含真实目录树；见 §3.0） |
+| GET | `/api/v1/assistant/fs` | 只读浏览真实目录元数据（query `path=proj/sub`，空则列可用根）；不读内容、不执行，白名单防逃逸 |
+| POST | `/api/v1/assistant/generate` | 自然语言 → 命令 → 执行后果模拟（body `{"query":...,"mode":"nl2cmd","fs_path":"proj"}`）；带 `fs_path` 时后果基于真实文件预测 |
+| POST | `/api/v1/assistant/simulate` | 只模拟一条命令文本的后果（body `{"command":...,"fs_path":"proj"}`），零执行原语 |
 | POST | `/api/v1/raw/completions` | **纯模型透传**：OpenAI 兼容 `messages`，按 `model` 路由，带限流与审计；供 ShellMate 使用 |
 | GET | `/api/v1/models` | 模型清单（接入/启用状态、停用原因、熔断剩余秒数、近 1h 延迟与成功率） |
 | PUT | `/api/v1/models/status` | 启用 / 停用模型，body `{"model":...,"enabled":false,"reason":...}` |

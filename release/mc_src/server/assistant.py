@@ -22,6 +22,11 @@ from typing import Any
 
 from . import raw
 
+try:  # 只读目录浏览是可选增强：缺失或不可用时优雅降级为抽象示例
+    from . import fsview
+except ImportError:  # pragma: no cover - 部署裁剪场景
+    fsview = None  # type: ignore[assignment]
+
 
 # ---------------------------------------------------------------------------
 # 1) 提示词（移植 ShellMate prompt.py 的铁律：non-thinking + 行协议 + 不执行）
@@ -616,13 +621,150 @@ def _summary_for(head: str, tokens: list[str], flags: set[str], paths: list[str]
             "未知", "（示例）无可用示例")
 
 
-def simulate_command(command: str, verdict: Verdict | None = None) -> dict[str, Any]:
+def _fs_snapshot(fs_path: str | None) -> dict[str, Any] | None:
+    """取只读目录快照（仅元数据）；任何不可用都返回 None，绝不影响命令生成。"""
+    if not fs_path or fsview is None:
+        return None
+    try:
+        snap = fsview.snapshot(fs_path)
+    except Exception:  # noqa: BLE001 - 目录增强失败必须静默降级
+        return None
+    return snap if snap.get("ok") else None
+
+
+def _fmt_size(n: int) -> str:
+    for unit in ("B", "KB", "MB", "GB"):
+        if n < 1024 or unit == "GB":
+            return f"{n:.0f}{unit}" if unit == "B" else f"{n:.1f}{unit}"
+        n /= 1024.0
+    return f"{n:.1f}GB"
+
+
+def _glob_match(pattern: str, name: str) -> bool:
+    """极简 glob：支持 * ? 与字面量，用于只读预测匹配，不调用 shell。"""
+    import fnmatch
+    return fnmatch.fnmatch(name, pattern)
+
+
+def _concrete_preview(command: str, snap: dict[str, Any]) -> dict[str, Any]:
+    """基于真实目录元数据，预测命令会命中的具体文件与输出。纯计算，零执行。
+
+    返回 ``{"matched":[{name,size,mtime}], "lines":[...], "hint":..., "exists":...}``；
+    只处理有把握的常见只读场景（ls / find / grep / head / tail / du / wc），
+    其余保持抽象示例，不臆造。
+    """
+    files: list[dict[str, Any]] = snap.get("files", [])
+    dirs: list[dict[str, Any]] = snap.get("dirs", [])
+    matched: list[dict[str, Any]] = []
+    lines: list[str] = []
+    hint = ""
+    exists: bool | None = None
+
+    try:
+        tokens = shlex.split(command, posix=True)
+    except ValueError:
+        tokens = command.split()
+    head = tokens[0] if tokens else ""
+    rest = tokens[1:]
+
+    # 命令里是否限定了「只看文件」与名字通配 / 大小阈值
+    name_pat = None
+    size_min = None
+    if "-name" in rest:
+        i = rest.index("-name")
+        if i + 1 < len(rest):
+            name_pat = rest[i + 1].strip("'\"")
+    if "-size" in rest:
+        i = rest.index("-size")
+        if i + 1 < len(rest):
+            m = re.match(r"\+(\d+)([kMGT])", rest[i + 1], re.I)
+            if m:
+                mult = {"k": 1024, "m": 1024**2, "g": 1024**3, "t": 1024**4}[m.group(2).lower()]
+                size_min = int(m.group(1)) * mult
+
+    candidates = list(files)
+    if head == "ls":
+        candidates = list(files) + list(dirs)
+    elif head in {"du", "df"}:
+        candidates = list(dirs) + list(files)
+    if name_pat:
+        candidates = [f for f in candidates if _glob_match(name_pat, f["name"])]
+    if size_min is not None:
+        candidates = [f for f in candidates if f.get("size", 0) >= size_min]
+
+    # find -printf %T@ / %TY 等按时间排序；ls -lt / -t 同样按时间；否则按名字
+    # 注意 -lt 是组合 flag，必须用 _flags() 展开，不能用 "-t" in rest
+    flags = _flags(tokens)
+    want_time = (
+        (head == "find" and ("-printf" in rest or any(r.startswith("%T") for r in rest)))
+        or "-t" in flags or "--sort=time" in rest
+    )
+    if want_time:
+        candidates.sort(key=lambda f: f.get("mtime_ts", 0), reverse=True)
+    else:
+        candidates.sort(key=lambda f: f["name"].lower())
+
+    # head/tail -n N、find -printf 常配 | head：限制条数
+    n = None
+    if head in {"head", "tail"} and "-n" in rest:
+        i = rest.index("-n")
+        if i + 1 < len(rest) and rest[i + 1].isdigit():
+            n = int(rest[i + 1])
+    if "|" in command or "head" in rest or "tail" in rest:
+        m = re.search(r"\bhead\s+-n\s+(\d+)", command)
+        if m:
+            n = int(m.group(1))
+    # ls | head -n 10 之类：n 已拿到；find 默认全部展示（受 MAX_ENTRIES 限制）
+    shown = candidates[:n] if n else candidates[:20]
+
+    for f in shown:
+        matched.append({"name": f["name"], "size": _fmt_size(f.get("size", 0)), "mtime": f.get("mtime", "")})
+        if head == "find" and "-printf" in rest:
+            lines.append(f"{f.get('mtime', '')} ./{f['name']}")
+        elif head == "ls" and want_time:
+            lines.append(f"{f.get('mtime', '')}  {f['name']}")  # 最近修改场景展示时间
+        elif head in {"ls", "du"}:
+            lines.append(f"{_fmt_size(f.get('size', 0)):>8}  {f['name']}")
+        else:
+            lines.append(f"./{f['name']}")
+
+    if head in {"rm", "rmdir", "unlink", "cat", "head", "tail", "grep", "cp", "mv", "chmod", "touch", "mkdir"}:
+        # 取第一个像路径的参数（排除 - 开头），检查是否真实存在
+        target = None
+        for t in rest:
+            if t.startswith("-"):
+                continue
+            if "/" in t or t in {".", ".."} or not t.startswith("%"):
+                target = t.strip("'\"")
+                break
+        if target:
+            base_name = target.rstrip("/").split("/")[-1] or "."
+            found = any(f["name"] == base_name for f in files + dirs) if base_name not in {".", ".."} else True
+            exists = found
+            if not found:
+                hint = (f"提示：当前目录里**没有**名为 {base_name} 的项目；"
+                        f"如果就这样执行，命令多半会报 “No such file or directory”。")
+
+    return {
+        "matched": matched,
+        "lines": lines,
+        "hint": hint,
+        "exists": exists,
+        "snapshot_display": snap.get("display", ""),
+        "scanned_count": snap.get("count", 0),
+    }
+
+
+def simulate_command(command: str, verdict: Verdict | None = None,
+                     fs_path: str | None = None) -> dict[str, Any]:
     """对一条命令文本做**静态**后果模拟。纯文本推演，绝不执行、不读目标路径。
 
     DENY 命令：命令本身会被门控清空，这里只返回「已拦截」说明，不推演细节，
     避免给用户一种「这条危险命令还能安全试行」的错觉。
     """
     verdict = verdict or gate_check(command)
+    snap = _fs_snapshot(fs_path)
+    concrete = _concrete_preview(command, snap) if (snap and verdict.level != "DENY") else None
     effects: list[Effect] = []
     summaries: list[str] = []
     reversibilities: list[str] = []
@@ -694,6 +836,7 @@ def simulate_command(command: str, verdict: Verdict | None = None) -> dict[str, 
             "reversible": "不适用（已拦截）",
             "sample_output": "无：命令未生成、未执行。",
             "warnings": [verdict.consequences] if verdict.consequences else [],
+            "real_fs": None,
         }
 
     rev = "不可逆" if "不可逆" in reversibilities or "灾难性" in "".join(reversibilities) else \
@@ -706,6 +849,8 @@ def simulate_command(command: str, verdict: Verdict | None = None) -> dict[str, 
     if verdict.level == "CAUTION" and verdict.consequences:
         warnings.append(verdict.consequences)
     warnings.extend(verdict.alternatives[:2])
+    if concrete and concrete.get("hint"):
+        warnings.append(concrete["hint"])
 
     # 管道命令：把三段拼成一条连贯叙述，避免重复啰嗦；示例只留第一条（最贴近用户所见）
     if has_pipe and len(summaries) > 1:
@@ -722,6 +867,25 @@ def simulate_command(command: str, verdict: Verdict | None = None) -> dict[str, 
         joined_summary = " ".join(summaries) if summaries else "空命令，无可模拟内容。"
         shown_samples = samples[:2]
 
+    # 有真实目录快照时：用真实文件名/大小/时间替换「（示例）」占位输出
+    real_fs = None
+    output = "\n".join(shown_samples) if shown_samples else "无"
+    if concrete is not None:
+        real_fs = {
+            "available": True,
+            "display": concrete.get("snapshot_display", ""),
+            "scanned": concrete.get("scanned_count", 0),
+            "matched": concrete.get("matched", []),
+            "exists": concrete.get("exists"),
+            "note": "基于真实目录的只读元数据预测：文件名、大小、修改时间均为真实值，但未读取文件内容。",
+        }
+        if concrete["lines"]:
+            real_lines = concrete["lines"]
+            output = ("（基于真实文件，非示例）\n" + "\n".join(real_lines))
+        if concrete["hint"]:
+            # hint 已进 warnings，避免重复；这里只保留真实输出
+            pass
+
     return {
         "command": command,
         "status": "simulated",
@@ -731,8 +895,9 @@ def simulate_command(command: str, verdict: Verdict | None = None) -> dict[str, 
         "writes_data": any(writes),
         "network_access": network,
         "reversible": rev,
-        "sample_output": "\n".join(shown_samples) if shown_samples else "无",
+        "sample_output": output,
         "warnings": list(dict.fromkeys(warnings)),
+        "real_fs": real_fs,
     }
 
 
@@ -740,7 +905,8 @@ def simulate_command(command: str, verdict: Verdict | None = None) -> dict[str, 
 # 5) 完整编排：NL → 真实模型 → 解析 → 门控 → 模拟
 # ---------------------------------------------------------------------------
 
-async def generate_command(query: str, mode: str = "nl2cmd", model: str | None = None) -> dict[str, Any]:
+async def generate_command(query: str, mode: str = "nl2cmd", model: str | None = None,
+                           fs_path: str | None = None) -> dict[str, Any]:
     """端到端生成。任何失败都返回结构化 error，不抛出到框架层。"""
     q = (query or "").strip()
     if not q:
@@ -788,7 +954,7 @@ async def generate_command(query: str, mode: str = "nl2cmd", model: str | None =
             "reason": v.reason,
             "consequences": v.consequences,
             "alternatives": v.alternatives,
-            "simulation": simulate_command(line, v),
+            "simulation": simulate_command(line, v, fs_path=fs_path),
         })
 
     # 整体风险取最高等级；整体命令文本只保留未被拦截的行（兼容旧前端）
@@ -802,7 +968,7 @@ async def generate_command(query: str, mode: str = "nl2cmd", model: str | None =
                 merged_alts.append(alt)
 
     # 整体模拟：把保留下来的命令合并推演，给前端一个总览卡片
-    simulation = simulate_command(effective_command, overall) if effective_command else {
+    simulation = simulate_command(effective_command, overall, fs_path=fs_path) if effective_command else {
         "command": "", "status": "blocked", "head": "",
         "summary": "所有命令均命中安全规则，已全部拦截，无可模拟内容。",
         "effects": [], "writes_data": False, "network_access": False,
@@ -824,6 +990,7 @@ async def generate_command(query: str, mode: str = "nl2cmd", model: str | None =
         "alternatives": merged_alts,
         "unverified": any(v.unverified for v in all_verdicts),
         "simulation": simulation,
+        "fs_context": (simulation.get("real_fs") or {}).get("display", "") if simulation else "",
         "model": actual_model,
         "demo": demo,
         "notice": "只生成 · 不执行 · 不隔离：本工具只展示命令文本与其后果模拟，绝不会替你运行任何命令。",
