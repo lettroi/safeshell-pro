@@ -86,6 +86,10 @@
   .copy:hover{background:#324261;color:#fff}
   .cmd-item{margin-bottom:14px;padding-bottom:14px;border-bottom:1px dashed var(--line)}
   .cmd-item:last-child{border-bottom:0;margin-bottom:0;padding-bottom:0}
+  /* 后果区从属于命令：淡色左边框 + 缩进，不再另起一张重复卡片 */
+  .cons{margin-top:12px;padding:4px 0 4px 13px;border-left:3px solid #dbe4f2}
+  .cons .summary{margin:2px 0 12px}
+  .cons .sample{margin-top:12px}
   .cmd-no{font-size:12px;color:var(--muted);font-weight:600;margin-right:10px}
   .cmdbox.blocked{background:#3a1a1a;opacity:.92}
   .cmdbox.blocked code{color:#ffb4ad;text-decoration:line-through}
@@ -337,6 +341,51 @@ function effectCard(e){
     <div class="t">${KIND[e.kind]||"操作"} ${e.target?`<code>${esc(e.target)}</code>`:""}</div>
     <div class="d">${esc(e.detail)}</div></div>`;
 }
+function renderConsequences(sim){
+  // 每条命令的「执行后果」只在这里展示一次，不再单列一张重复卡片。
+  if(!sim) return "";
+  const rs = sim.real_fs;
+  const real = !!(rs && rs.available);
+  let h = "";
+
+  // 一句话推演
+  if(sim.summary) h += `<div class="summary">${esc(sim.summary)}</div>`;
+
+  if(real){
+    // 真实文件模式：命中清单 / 无返回 已经是最具体的后果，不再重复 effects 与示例输出
+    const hits = rs.matched||[];
+    if(hits.length){
+      h += `<div class="realfs"><div class="rh">🎯 基于真实文件的预测（${hits.length} 项命中）</div>
+         <div class="path">📍 ${esc(rs.display||"")}</div>
+         <div class="hits">${hits.map(f=>`<span class="hit"><b>${esc(f.name)}</b> · ${esc(f.size)}<span class="mt">${esc(f.mtime)}</span></span>`).join("")}</div>
+         ${rs.exists===false?`<div class="notfound">⚠ 目标文件在当前目录里没找到，命令可能报「文件不存在」。</div>`:''}
+       </div>`;
+    } else {
+      h += `<div class="realfs noreturn"><div class="rh">📭 无返回结果</div>
+         <div class="path">📍 ${esc(rs.display||"")}</div>
+         <div class="nr">${esc(rs.no_result_reason||"当前目录下没有符合条件的结果。")}</div>
+       </div>`;
+    }
+  } else {
+    // 抽象模式（未选基准目录）：没有真实清单，用影响卡片与示例输出说明后果
+    const effects = (sim.effects||[]).map(effectCard).join("");
+    if(effects) h += `<div class="effects">${effects}</div>`;
+    if(sim.sample_output) h += `<div class="sample">${esc(sim.sample_output)}</div>`;
+  }
+
+  // 三个关键事实：精简成一行
+  h += `<div class="facts">
+      <div class="fact"><div class="l">是否改动系统</div><div class="v">${sim.writes_data?"会改动":"不会改动"}</div></div>
+      <div class="fact"><div class="l">能否撤销</div><div class="v">${esc(sim.reversible||"—")}</div></div>
+      <div class="fact"><div class="l">访问网络</div><div class="v">${sim.network_access?"会":"不会"}</div></div>
+    </div>`;
+
+  // 安全警告：目标不存在的提示已在命中清单里，去重
+  const warns = (sim.warnings||[]).filter(w=>!w.includes("目标不存在")).map(w=>`<div class="warn">⚠ ${esc(w)}</div>`).join("");
+  if(warns) h += `<div class="warns">${warns}</div>`;
+  return h;
+}
+
 function renderCommandBlock(item, idx, total){
   const blocked = item.blocked;
   const text = blocked ? item.original : item.text;
@@ -345,25 +394,11 @@ function renderCommandBlock(item, idx, total){
     ? `<div class="cmdbox blocked"><code>${esc(item.original)}</code><span class="blocked-tag">已拦截</span></div>`
     : `<div class="cmdbox"><code>${esc(text)}</code><button class="copy" data-cmd="${esc(text)}" onclick="copyCmd(this)">复制</button></div>`;
   const n = total>1 ? `<span class="cmd-no">第 ${idx+1} / ${total} 条</span>` : "";
-  const rs = (item.simulation&&item.simulation.real_fs);
-  let hitHtml = "";
-  if(rs && rs.available){
-    const hits = rs.matched||[];
-    if(hits.length){
-      hitHtml = `<div class="realfs"><div class="rh">🎯 基于真实文件的预测（${hits.length} 项命中）</div>
-         <div class="path">📍 ${esc(rs.display||"")}</div>
-         <div class="hits">${hits.map(f=>`<span class="hit"><b>${esc(f.name)}</b> · ${esc(f.size)}<span class="mt">${esc(f.mtime)}</span></span>`).join("")}</div>
-         ${rs.exists===false?`<div class="notfound">⚠ 目标文件在当前目录里没找到，命令可能报「文件不存在」。</div>`:''}
-       </div>`;
-    } else if(rs.no_result){
-      // 明确无返回：标注出来，不留白、不显示误导性示例
-      hitHtml = `<div class="realfs noreturn"><div class="rh">📭 无返回结果</div>
-         <div class="path">📍 ${esc(rs.display||"")}</div>
-         <div class="nr">${esc(rs.no_result_reason||"当前目录下没有符合条件的结果。")}</div>
-       </div>`;
-    }
-  }
-  return `<div class="cmd-item">${n}${badge}${cmd}${blocked?`<div class="err" style="margin-top:8px">这条命令命中不可逆规则，已拒绝输出，请勿执行。${item.consequences?esc(item.consequences):""}</div>`:""}${hitHtml}</div>`;
+  const cons = blocked ? "" : renderConsequences(item.simulation);
+  return `<div class="cmd-item">${n}${badge}${cmd}
+    ${blocked?`<div class="err" style="margin-top:8px">这条命令命中不可逆规则，已拒绝输出，请勿执行。${item.consequences?esc(item.consequences):""}</div>`:""}
+    ${cons?`<div class="cons">${cons}</div>`:""}
+  </div>`;
 }
 function render(d){
   if(!d.ok){
@@ -378,11 +413,9 @@ function render(d){
   const copyAll = items.length>1 && d.command
     ? `<button class="copy" style="margin-top:10px" data-cmd="${esc(d.command)}" onclick="copyCmd(this)">复制全部 ${items.length} 条</button>` : "";
 
-  const effects = (sim.effects||[]).map(effectCard).join("");
   const params = (d.params||[]).map(p=>`<div class="param"><code>${esc(p.token)}</code> <span>${esc(p.meaning)}</span></div>`).join("");
   const alts = (d.alternatives||[]).length
     ? `<ul class="alts">${d.alternatives.map(a=>`<li>${esc(a)}</li>`).join("")}</ul>` : "";
-  const warns = (sim.warnings||[]).map(w=>`<div class="warn">⚠ ${esc(w)}</div>`).join("");
   const real = sim.real_fs && sim.real_fs.available;
 
   return `
@@ -399,20 +432,7 @@ function render(d){
   </div>
 
   <div class="card">
-    <div class="sim-head"><h2 style="margin:0">② 执行后果模拟</h2><span class="badge-sim">仅文字推演 · 不会真的执行</span></div>
-    <div class="summary">${esc(sim.summary||"")}</div>
-    ${effects?`<div class="effects">${effects}</div>`:""}
-    <div class="facts">
-      <div class="fact"><div class="l">是否改动系统</div><div class="v">${sim.writes_data?"会改动":"不会改动"}</div></div>
-      <div class="fact"><div class="l">能否撤销</div><div class="v">${esc(sim.reversible||"—")}</div></div>
-      <div class="fact"><div class="l">访问网络</div><div class="v">${sim.network_access?"会":"不会"}</div></div>
-    </div>
-    ${sim.sample_output?`<div class="sample">${esc(sim.sample_output)}</div>`:""}
-    ${warns?`<div class="warns">${warns}</div>`:""}
-  </div>
-
-  <div class="card">
-    <h2>③ 这条命令在做什么</h2>
+    <h2>② 这条命令在做什么</h2>
     <div class="explain">${esc(d.explain)}</div>
     ${params?`<h2 style="margin-top:16px">参数拆解</h2><div class="params">${params}</div>`:""}
     ${alts?`<h2 style="margin-top:16px">更安全的做法</h2>${alts}`:""}
