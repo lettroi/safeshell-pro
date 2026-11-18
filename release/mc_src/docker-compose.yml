@@ -37,7 +37,9 @@ services:
       - ./logs:/app/logs
       # 真实目录只读挂载：供命令助手预览「执行后果」时读取元数据（名字/大小/时间）。
       # :ro 保证网关进程绝无可能改动这些目录；fsview.py 另有路径白名单与不读内容约束。
-      # 可用 SFP_BROWSE_PROJECT / SFP_BROWSE_TMP 覆盖为自己想浏览的目录。
+      # root 为整个 Linux 根目录（界面默认从这里开始浏览）；另留 project/tmp 快捷入口。
+      # 可用 SFP_BROWSE_ROOT / SFP_BROWSE_PROJECT / SFP_BROWSE_TMP 覆盖为自己想浏览的目录。
+      - ${SFP_BROWSE_ROOT:-/}:/hostfs/root:ro
       - ${SFP_BROWSE_PROJECT:-/root/safeshell-pro}:/hostfs/project:ro
       - ${SFP_BROWSE_TMP:-/tmp}:/hostfs/tmp:ro
     restart: unless-stopped

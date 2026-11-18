@@ -80,6 +80,17 @@ def test_symlink_not_followed(tmp_path, monkeypatch):
         fsview.resolve("proj/linkout/secret.txt")
 
 
+def test_root_display_no_double_slash(tmp_path, monkeypatch):
+    """root 逻辑根的展示前缀是 /，拼 rel 不能产出 //etc。"""
+    (tmp_path / "etc").mkdir()
+    monkeypatch.setenv("ASSISTANT_FS_ROOTS", f"root={tmp_path}")
+    monkeypatch.setitem(fsview._DISPLAY, "root", "/")
+    _, _, _, display = fsview.resolve("root/etc")
+    assert display == "/etc", f"根下路径不应有双斜杠，实际 {display}"
+    _, _, _, display_root = fsview.resolve("root")
+    assert display_root == "/"
+
+
 def test_fs_endpoint_ok_and_error(browse_root):
     r = client.get("/api/v1/assistant/fs", params={"path": "proj"})
     assert r.status_code == 200 and r.json()["ok"] is True

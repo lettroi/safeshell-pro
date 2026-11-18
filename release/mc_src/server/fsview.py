@@ -10,8 +10,8 @@
 - **敏感文件过滤**：.env / *.db / *token* / *.key / id_rsa 等只按「已隐藏」计数，不返回名字。
 
 环境变量：
-    ASSISTANT_FS_ROOTS  形如 ``project=/hostfs/project,tmp=/hostfs/tmp``（容器内已只读挂载的路径）
-    ASSISTANT_FS_PROJECT_DISPLAY / ASSISTANT_FS_TMP_DISPLAY  宿主侧展示路径前缀（默认 WSL 路径）
+    ASSISTANT_FS_ROOTS  形如 ``root=/hostfs/root,project=/hostfs/project,tmp=/hostfs/tmp``（容器内已只读挂载的路径）
+    ASSISTANT_FS_ROOT_DISPLAY / PROJECT_DISPLAY / TMP_DISPLAY  宿主侧展示路径前缀（默认 WSL 路径）
 """
 from __future__ import annotations
 
@@ -24,8 +24,9 @@ from typing import Any
 MAX_ENTRIES = 200
 MAX_PATH_CHARS = 600
 
-_DEFAULT_ROOTS = "project=/hostfs/project,tmp=/hostfs/tmp"
+_DEFAULT_ROOTS = "root=/hostfs/root,project=/hostfs/project,tmp=/hostfs/tmp"
 _DISPLAY = {
+    "root": os.environ.get("ASSISTANT_FS_ROOT_DISPLAY", "/"),
     "project": os.environ.get("ASSISTANT_FS_PROJECT_DISPLAY", "/root/safeshell-pro"),
     "tmp": os.environ.get("ASSISTANT_FS_TMP_DISPLAY", "/tmp"),
 }
@@ -102,8 +103,9 @@ def resolve(path: str) -> tuple[Path, str, str, str]:
         raise FsError("路径越界（符号链接或 .. 指向白名单之外）")
 
     rel = "/".join(rel_parts)
-    display_prefix = _DISPLAY.get(label, str(base))
-    display = display_prefix + ("/" + rel if rel else "")
+    display_prefix = _DISPLAY.get(label, str(base)).rstrip("/")
+    # root 的展示前缀是 "/"，rstrip 后为空，拼接时不能产出 "//etc"
+    display = (display_prefix + "/" + rel) if rel else (display_prefix or "/")
     return target, label, rel, display
 
 
